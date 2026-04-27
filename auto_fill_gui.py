@@ -157,12 +157,31 @@ RECENT_FILES_FILE = Path.home() / ".auto_form_filler_recent"
 RECENT_FILES_MAX = 8
 
 
+# Window sizing constants -- the launcher computes a target geometry from the
+# active screen so the GUI looks right on a 13" laptop and a 4K monitor alike.
+_TARGET_W_FRACTION = 0.80   # 80% of screen width
+_TARGET_H_FRACTION = 0.85   # 85% of screen height
+_MAX_W = 1600               # cap so we don't sprawl on 4K
+_MAX_H = 1100
+_MIN_W = 900
+_MIN_H = 600
+_FADE_IN_STEPS = 12         # alpha 0 -> 1 in this many frames
+_FADE_IN_INTERVAL_MS = 18   # ~16 ms = ~60 fps; 18 ms is comfortable on Tk
+
+
 class AutoFillGUI(tk.Tk):
     def __init__(self, initial_config_path: Optional[str] = None) -> None:
         super().__init__()
-        self.title("auto_form_filler")
-        self.geometry("1180x780")
-        self.minsize(900, 600)
+        # Hide the window briefly so the user doesn't see the resize jump
+        # before fade-in kicks off.
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+
+        self.title("AUTOMAtion")
+        self._apply_screen_geometry()
+        self.minsize(_MIN_W, _MIN_H)
 
         self.config_path: Optional[Path] = None
         self.config_data: dict[str, Any] = copy.deepcopy(EMPTY_CONFIG)
@@ -198,6 +217,8 @@ class AutoFillGUI(tk.Tk):
         self._update_title()
 
         self.after(100, self._drain_log_queue)
+        # Fade in once the layout has settled.
+        self.after(40, self._fade_in)
 
     # ------------------------------------------------------------------ theme
 
@@ -236,7 +257,10 @@ class AutoFillGUI(tk.Tk):
             data = {}
 
         geom = data.get("geometry")
-        if isinstance(geom, str) and "x" in geom:
+        # Only honour the saved geometry if it still fits on the current
+        # screen — avoids the window opening half off-screen when the user
+        # plugs in a smaller display since last launch.
+        if isinstance(geom, str) and "x" in geom and self._geometry_fits_screen(geom):
             try:
                 self.geometry(geom)
                 self.update_idletasks()
@@ -271,6 +295,17 @@ class AutoFillGUI(tk.Tk):
             self._right_paned.sashpos(0, int(right) if right else int(right_h * 0.40))
         except Exception:
             pass
+
+    def _geometry_fits_screen(self, geom: str) -> bool:
+        """Return True if a saved ``WxH+X+Y`` string still fits the screen."""
+        try:
+            size, *rest = geom.split("+")
+            w, h = (int(v) for v in size.split("x"))
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            return w <= sw and h <= sh
+        except Exception:
+            return False
 
     def _save_layout(self) -> None:
         try:
@@ -319,9 +354,52 @@ class AutoFillGUI(tk.Tk):
         name = self.config_path.name if self.config_path else "(unsaved)"
         marker = "•" if self._dirty else ""
         try:
-            self.title(f"auto_form_filler — {marker}{name}")
+            self.title(f"AUTOMAtion — {marker}{name}")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ window sizing & fade-in
+
+    def _apply_screen_geometry(self) -> None:
+        """Pick a window size that fits the user's screen and centre it.
+
+        Uses ``winfo_screenwidth/height`` (the active monitor under the
+        cursor on most desktops) and falls back to a sane default if those
+        calls error out (e.g. headless / weird WM).
+        """
+        try:
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+        except Exception:
+            sw, sh = 1366, 768
+        w = min(int(sw * _TARGET_W_FRACTION), _MAX_W)
+        h = min(int(sh * _TARGET_H_FRACTION), _MAX_H)
+        w = max(w, _MIN_W)
+        h = max(h, _MIN_H)
+        x = max((sw - w) // 2, 0)
+        y = max((sh - h) // 2, 0)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _fade_in(self, step: int = 0) -> None:
+        """Animate window alpha from 0 → 1 with smooth easing.
+
+        Tk's ``-alpha`` attribute is only honoured by some window managers
+        (it's a no-op on a few X11 setups). We try anyway; if it raises we
+        just snap to fully visible.
+        """
+        try:
+            t = (step + 1) / _FADE_IN_STEPS
+            # Ease-out cubic for a natural feel.
+            alpha = 1.0 - (1.0 - t) ** 3
+            self.attributes("-alpha", min(1.0, max(0.0, alpha)))
+        except tk.TclError:
+            try:
+                self.attributes("-alpha", 1.0)
+            except tk.TclError:
+                pass
+            return
+        if step + 1 < _FADE_IN_STEPS:
+            self.after(_FADE_IN_INTERVAL_MS, self._fade_in, step + 1)
 
     # ------------------------------------------------------------------ recent files
 

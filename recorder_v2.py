@@ -584,7 +584,17 @@ def build_config(
     *,
     target_url: str,
     wait_for_selector: Optional[str] = None,
+    auto_template: bool = True,
 ) -> dict:
+    """Construct a v2 config dict from a finished recording session.
+
+    When ``auto_template=True`` (the default) the captured ``fill`` /
+    ``contenteditable`` actions whose values look like emails / phones /
+    dates / full names get a ``value_template`` field of ``"{var}"``,
+    and a side ``variables`` dict is added so the user knows which
+    fields are templatised. The literal ``value`` is preserved as a
+    fallback so old replay code paths keep working.
+    """
     cfg: dict = {
         "version": 2,
         "target_url": target_url,
@@ -594,6 +604,7 @@ def build_config(
         "captured_at": datetime.now().isoformat(timespec="seconds"),
     }
     submit = None
+    raw_actions: list[dict] = []
     for a in session.actions:
         if a.get("kind") == "submit":
             submit = {
@@ -602,7 +613,19 @@ def build_config(
                 "frame_chain": a.get("frame_chain") or ["top"],
             }
             continue
-        cfg["actions"].append(a)
+        raw_actions.append(a)
+
+    if auto_template:
+        try:
+            from auto_template import extract_variables
+            templated, variables = extract_variables(raw_actions)
+        except Exception:
+            templated, variables = raw_actions, {}
+        cfg["actions"] = templated
+        if variables:
+            cfg["variables"] = variables
+    else:
+        cfg["actions"] = raw_actions
     cfg["submit"] = submit
     return cfg
 

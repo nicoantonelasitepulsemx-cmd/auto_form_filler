@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Test Form</title></head>
+<body>
+  <h1>Demo Form</h1>
+  <form id="demo">
+    <label for="email">Email address</label>
+    <input id="email" name="email" type="email" placeholder="you@example.com" />
+
+    <label for="full_name">Full name</label>
+    <input id="full_name" name="full_name" type="text" />
+
+    <label for="message">Message</label>
+    <textarea id="message" name="message" aria-label="Message body"></textarea>
+
+    <label for="country">Country</label>
+    <select id="country" name="country">
+      <option value="">--</option>
+      <option value="vn">Vietnam</option>
+      <option value="us">United States</option>
+    </select>
+
+    <label><input type="checkbox" id="agree" name="agree" /> I agree</label>
+
+    <fieldset>
+      <legend>Plan</legend>
+      <label><input type="radio" name="plan" value="free" /> Free</label>
+      <label><input type="radio" name="plan" value="pro" /> Pro</label>
+    </fieldset>
+
+    <button type="submit" id="submit">Submit</button>
+  </form>
+</body></html>

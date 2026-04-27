@@ -1,0 +1,31 @@
+[
+  {
+    "name": "alpha",
+    "user_data_dir": "./profiles/alpha",
+    "proxy": "http://user1:pass1@proxy.example:8080",
+    "vars": {
+      "email": "alpha@example.com",
+      "full_name": "Alpha Account",
+      "phone": "0900000001"
+    },
+    "headless": false,
+    "viewport": { "width": 1280, "height": 800 }
+  },
+  {
+    "name": "beta",
+    "user_data_dir": "./profiles/beta",
+    "proxy": "socks5://proxy.example:1080",
+    "vars": {
+      "email": "beta@example.com",
+      "full_name": "Beta Account",
+      "phone": "0900000002"
+    }
+  },
+  {
+    "name": "gamma",
+    "vars": {
+      "email": "gamma@example.com",
+      "full_name": "Gamma Account"
+    }
+  }
+]

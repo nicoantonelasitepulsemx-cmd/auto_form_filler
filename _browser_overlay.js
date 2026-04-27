@@ -1,0 +1,217 @@
+// Shared JS bundle injected into the page by picker.py and recorder.py.
+// Exposes:
+//   window.__af_snapshot(el)   — returns a JSON-friendly element descriptor
+//   window.__af_pickMode()     — start "click any element, send it to Python"
+//   window.__af_recordMode()   — start recording form interactions
+//   window.__af_finishRecord() — flush recorded events to Python (called by Done button)
+
+(function () {
+    if (window.__af_loaded) return;
+    window.__af_loaded = true;
+
+    const FORM_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+    function jsonEscape(s) {
+        return (s || "").toString();
+    }
+
+    function snapshot(el) {
+        const attrs = {};
+        if (el && el.attributes) {
+            for (const a of el.attributes) attrs[a.name] = a.value;
+        }
+
+        // <label for="...">
+        let labelText = null;
+        if (el.id) {
+            const lbl = document.querySelector(
+                'label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]'
+            );
+            if (lbl) labelText = (lbl.innerText || lbl.textContent || "").trim();
+        }
+        // wrapping <label>
+        if (!labelText && el.closest) {
+            const wrap = el.closest("label");
+            if (wrap) {
+                // Strip the value of any nested input from the label text
+                const clone = wrap.cloneNode(true);
+                clone.querySelectorAll("input, textarea, select").forEach((n) => n.remove());
+                labelText = (clone.innerText || clone.textContent || "").trim();
+            }
+        }
+        // preceding sibling label / heading
+        if (!labelText) {
+            let p = el.previousElementSibling;
+            for (let i = 0; i < 3 && p; i++, p = p.previousElementSibling) {
+                if (["LABEL", "P", "SPAN", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LEGEND"].includes(p.tagName)) {
+                    const t = (p.innerText || p.textContent || "").trim();
+                    if (t && t.length < 200) {
+                        labelText = t;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Nearby text from parent (text nodes only)
+        let nearbyText = null;
+        const parent = el.parentElement;
+        if (parent) {
+            const t = Array.from(parent.childNodes)
+                .filter((n) => n.nodeType === Node.TEXT_NODE)
+                .map((n) => n.textContent.trim())
+                .filter(Boolean)
+                .join(" ");
+            nearbyText = t || null;
+        }
+
+        // Compose a stable CSS path as a last-resort selector
+        const cssPath = (function (n) {
+            const parts = [];
+            while (n && n.nodeType === Node.ELEMENT_NODE && parts.length < 6) {
+                let part = n.tagName.toLowerCase();
+                if (n.id) {
+                    part += "#" + n.id;
+                    parts.unshift(part);
+                    break;
+                }
+                const par = n.parentElement;
+                if (par) {
+                    const sib = Array.from(par.children).filter((c) => c.tagName === n.tagName);
+                    if (sib.length > 1) {
+                        part += ":nth-of-type(" + (sib.indexOf(n) + 1) + ")";
+                    }
+                }
+                parts.unshift(part);
+                n = n.parentElement;
+            }
+            return parts.join(" > ");
+        })(el);
+
+        return {
+            tag: el.tagName ? el.tagName.toLowerCase() : null,
+            type: attrs.type || null,
+            id: attrs.id || null,
+            name: attrs.name || null,
+            placeholder: attrs.placeholder || null,
+            ariaLabel: attrs["aria-label"] || null,
+            ariaLabelledby: attrs["aria-labelledby"] || null,
+            ariaPlaceholder: attrs["aria-placeholder"] || null,
+            role: attrs.role || null,
+            dataTestid: attrs["data-testid"] || null,
+            labelText: labelText || null,
+            nearbyText: nearbyText || null,
+            value: el.value !== undefined ? el.value : null,
+            checked: !!el.checked,
+            cssPath: cssPath,
+        };
+    }
+
+    window.__af_snapshot = snapshot;
+
+    // ---------- Pick mode ----------
+    window.__af_pickMode = function () {
+        let lastEl = null;
+        const restore = new Map();
+
+        function setOutline(el, outline, shadow) {
+            if (!restore.has(el)) restore.set(el, [el.style.outline, el.style.boxShadow]);
+            el.style.outline = outline;
+            el.style.boxShadow = shadow;
+        }
+        function clearOutline(el) {
+            const r = restore.get(el);
+            if (r) {
+                el.style.outline = r[0];
+                el.style.boxShadow = r[1];
+                restore.delete(el);
+            }
+        }
+
+        function onMove(e) {
+            if (lastEl && lastEl !== e.target) clearOutline(lastEl);
+            lastEl = e.target;
+            setOutline(lastEl, "3px solid #ff3c00", "0 0 8px rgba(255,60,0,0.7)");
+        }
+
+        function onClick(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            const snap = snapshot(e.target);
+            document.removeEventListener("mousemove", onMove, true);
+            document.removeEventListener("click", onClick, true);
+            if (lastEl) clearOutline(lastEl);
+            try {
+                window.__afPicked(JSON.stringify(snap));
+            } catch (_) {}
+        }
+
+        document.addEventListener("mousemove", onMove, true);
+        document.addEventListener("click", onClick, true);
+    };
+
+    // ---------- Record mode ----------
+    window.__af_recordMode = function () {
+        const records = []; // ordered, deduped by element
+        const elIndex = new Map();
+
+        function track(el) {
+            if (!FORM_TAGS.has(el.tagName)) return;
+            // skip the Done button itself
+            if (el.dataset && el.dataset.afDone === "1") return;
+            const snap = snapshot(el);
+            if (elIndex.has(el)) {
+                records[elIndex.get(el)] = snap;
+            } else {
+                elIndex.set(el, records.length);
+                records.push(snap);
+            }
+        }
+
+        document.addEventListener(
+            "input",
+            (e) => track(e.target),
+            true
+        );
+        document.addEventListener(
+            "change",
+            (e) => track(e.target),
+            true
+        );
+        document.addEventListener(
+            "click",
+            (e) => {
+                if (e.target.tagName === "INPUT" && (e.target.type === "checkbox" || e.target.type === "radio")) {
+                    track(e.target);
+                }
+            },
+            true
+        );
+
+        // Floating "Done" button
+        const btn = document.createElement("button");
+        btn.textContent = "✓ Done recording";
+        btn.dataset.afDone = "1";
+        btn.style.cssText = [
+            "position:fixed", "top:12px", "right:12px", "z-index:2147483647",
+            "padding:10px 16px", "background:#ff3c00", "color:#fff",
+            "border:none", "border-radius:6px", "font:600 14px system-ui",
+            "cursor:pointer", "box-shadow:0 4px 12px rgba(0,0,0,0.3)",
+        ].join(";");
+        btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                window.__afRecorded(JSON.stringify(records));
+            } catch (_) {}
+        });
+        document.body.appendChild(btn);
+
+        window.__af_finishRecord = function () {
+            try {
+                window.__afRecorded(JSON.stringify(records));
+            } catch (_) {}
+        };
+    };
+})();

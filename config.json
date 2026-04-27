@@ -1,0 +1,93 @@
+{
+  "target_url": "https://www.facebook.com/help/contact/1758255661104383",
+  "wait_for_selector": "form",
+  "headless": false,
+  "dry_run": true,
+  "submit_selectors": [
+    "button[type='submit']",
+    "div[role='button']:has-text('Send')",
+    "button:has-text('Send')"
+  ],
+  "fields": [
+    {
+      "field_id": "full_name",
+      "value": "Nguyen Van A",
+      "targets": [
+        {"strategy": "id",          "selector": "input[name='full_name']"},
+        {"strategy": "aria_label",  "selector": "input[aria-label='Full name']"},
+        {"strategy": "label_text",  "selector": "Full name"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='name' i]"}
+      ]
+    },
+    {
+      "field_id": "email",
+      "value": "example@email.com",
+      "targets": [
+        {"strategy": "type",        "selector": "input[type='email']"},
+        {"strategy": "id",          "selector": "input[id*='email' i]"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='email' i]"},
+        {"strategy": "label_text",  "selector": "Email address"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='email' i]"}
+      ]
+    },
+    {
+      "field_id": "country",
+      "field_type": "select",
+      "value": "Vietnam",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Where are you asserting rights?"},
+        {"strategy": "id",          "selector": "select[name='country']"},
+        {"strategy": "aria_label",  "selector": "select[aria-label*='country' i]"}
+      ]
+    },
+    {
+      "field_id": "rights_owner",
+      "value": "Self",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Whose rights are being infringed?"},
+        {"strategy": "aria_label",  "selector": "[aria-label*='whose rights' i]"}
+      ]
+    },
+    {
+      "field_id": "content_type_photo_video",
+      "field_type": "checkbox",
+      "value": true,
+      "targets": [
+        {"strategy": "label_text",  "selector": "Photo, video or post"},
+        {"strategy": "value",       "selector": "input[value='photo_video']"}
+      ]
+    },
+    {
+      "field_id": "infringing_urls",
+      "field_type": "multi_textarea",
+      "value": [
+        "https://www.facebook.com/post/1",
+        "https://www.facebook.com/post/2"
+      ],
+      "targets": [
+        {"strategy": "placeholder", "selector": "textarea[placeholder*='facebook.com' i]"},
+        {"strategy": "label_text",  "selector": "Please provide links"},
+        {"strategy": "css",         "selector": "textarea"}
+      ]
+    },
+    {
+      "field_id": "description",
+      "field_type": "textarea",
+      "value": "These posts copy my original content (photos and captions) without permission.\nPlease take action.",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Describe"},
+        {"strategy": "placeholder", "selector": "textarea[placeholder*='describe' i]"},
+        {"strategy": "nearby_text", "selector": "describe"}
+      ]
+    },
+    {
+      "field_id": "signature",
+      "value": "Nguyen Van A",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Signature"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='signature' i]"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='signature' i]"}
+      ]
+    }
+  ]
+}

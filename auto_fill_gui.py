@@ -742,20 +742,32 @@ class AutoFillGUI(tk.Tk):
         ttk.Button(proxy_row, text="Test", width=6, command=self.cmd_test_proxy).grid(
             row=0, column=6, sticky="w", padx=(4, 0)
         )
+        # Row 1 — bypass (chỉ riêng dòng này, để dễ nhìn)
         ttk.Label(proxy_row, text="bypass:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.proxy_bypass_var = tk.StringVar()
-        ttk.Entry(proxy_row, textvariable=self.proxy_bypass_var, width=36).grid(
-            row=1, column=1, sticky="we", pady=(4, 0), padx=(4, 8)
+        ttk.Entry(proxy_row, textvariable=self.proxy_bypass_var, width=60).grid(
+            row=1, column=1, columnspan=6, sticky="we", pady=(4, 0), padx=(4, 8)
         )
-        ttk.Label(proxy_row, text="list file:").grid(row=1, column=2, sticky="w", pady=(4, 0))
+        ttk.Label(
+            proxy_row,
+            text="hosts đi thẳng (không qua proxy), cách nhau bằng dấu phẩy — vd: *.local, 127.0.0.1",
+            foreground="#777",
+        ).grid(row=2, column=1, columnspan=7, sticky="w", padx=(4, 0))
+
+        # Row 3 — Import .txt (proxy rotation trong 1 tab) — dòng riêng theo yêu cầu
+        ttk.Label(
+            proxy_row, text="import .txt:",
+        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
         self.proxy_list_var = tk.StringVar()
-        ttk.Entry(proxy_row, textvariable=self.proxy_list_var, width=24).grid(
-            row=1, column=3, columnspan=2, sticky="we", pady=(4, 0), padx=(4, 4)
+        ttk.Entry(proxy_row, textvariable=self.proxy_list_var, width=44).grid(
+            row=3, column=1, columnspan=3, sticky="we", pady=(8, 0), padx=(4, 4)
         )
-        ttk.Button(proxy_row, text="…", width=3, command=self.cmd_pick_proxy_list).grid(
-            row=1, column=5, sticky="w", pady=(4, 0)
+        ttk.Button(
+            proxy_row, text="…", width=3, command=self.cmd_pick_proxy_list,
+        ).grid(row=3, column=4, sticky="w", pady=(8, 0))
+        ttk.Label(proxy_row, text="rotate:").grid(
+            row=3, column=5, sticky="w", pady=(8, 0), padx=(8, 0),
         )
-        ttk.Label(proxy_row, text="rotate:").grid(row=1, column=6, sticky="w", pady=(4, 0), padx=(8, 0))
         self.proxy_rotate_var = tk.StringVar(value="round_robin")
         ttk.Combobox(
             proxy_row,
@@ -763,7 +775,18 @@ class AutoFillGUI(tk.Tk):
             values=["round_robin", "random", "none"],
             width=12,
             state="readonly",
-        ).grid(row=1, column=7, sticky="w", pady=(4, 0), padx=(4, 0))
+        ).grid(row=3, column=6, sticky="w", pady=(8, 0), padx=(4, 0))
+        ttk.Label(
+            proxy_row,
+            text=(
+                "import file proxy .txt (host:port:user:pass / 1 dòng / một proxy) "
+                "→ rotate trong CÙNG 1 tab. "
+                "Muốn chạy nhiều tab song song: dùng hàng \"Proxy pool\" phía dưới."
+            ),
+            foreground="#777",
+            wraplength=720,
+            justify="left",
+        ).grid(row=4, column=1, columnspan=7, sticky="w", padx=(4, 0), pady=(2, 0))
         proxy_row.columnconfigure(1, weight=1)
 
         # Chrome profile row

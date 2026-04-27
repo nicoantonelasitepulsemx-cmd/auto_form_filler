@@ -621,10 +621,32 @@ async def record_to_config(
     save_events: bool = True,
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
+    capture_screenshots: bool = True,
 ) -> tuple[dict, list[dict]]:
+    """Drive a browser, record the user's clicks/fills, return a v2 config.
+
+    When ``capture_screenshots=True`` (the default) and ``out_path`` is
+    provided, every captured action also gets a viewport PNG saved next
+    to the config in ``<stem>_shots/step_NNNN_<kind>.png`` and the
+    relative path stored on the action under the ``screenshot`` key.
+    Screenshot failures (page closed mid-click, frame detached, etc.)
+    are silently swallowed — the recorded action is unaffected.
+    """
     fut: asyncio.Future[str] = asyncio.get_event_loop().create_future()
     session = _Session()
     proxy_dict = normalize_proxy(proxy) if proxy else None
+
+    # Resolve the screenshots directory eagerly so we don't pay the cost
+    # again per click. ``shots_dir`` stays None when screenshots are off
+    # or no out_path was given (e.g. ad-hoc CLI smoke runs).
+    shots_dir: Optional[Path] = None
+    if capture_screenshots and out_path:
+        try:
+            _out = Path(out_path)
+            shots_dir = _out.parent / f"{_out.stem}_shots"
+            shots_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            shots_dir = None
 
     async with async_playwright() as p:
         browser = None
@@ -651,11 +673,47 @@ async def record_to_config(
             browser = await p.chromium.launch(**launch_kwargs)
             context = await browser.new_context()
 
+        async def _capture_screenshot(snap: dict, idx: int) -> None:
+            """Best-effort viewport snapshot of whichever page is active.
+
+            We try the page that owns the topmost (last) frame chain; that
+            page is overwhelmingly the one the user just clicked. On any
+            failure we annotate ``screenshot_error`` and move on so the
+            action itself is never lost.
+            """
+            if shots_dir is None:
+                return
+            try:
+                # Prefer the most-recently-active page. Playwright orders
+                # ``context.pages`` roughly by creation; the user's flow is
+                # almost always on the last opened page (form pop-ups,
+                # OAuth tabs, etc.).
+                active = context.pages[-1] if context.pages else None
+                if active is None or active.is_closed():
+                    return
+                kind = str(snap.get("kind", "action"))[:20].replace("/", "_")
+                fname = f"step_{idx:04d}_{kind}.png"
+                fpath = shots_dir / fname
+                await active.screenshot(
+                    path=str(fpath),
+                    full_page=False,
+                    timeout=2500,
+                )
+                # Store as POSIX-relative so the same config replays on
+                # both Linux and Windows replay hosts.
+                snap["screenshot"] = f"{shots_dir.name}/{fname}"
+            except Exception as exc:
+                snap["screenshot_error"] = repr(exc)[:120]
+
         async def on_record(payload: str) -> None:
             try:
                 snap = json.loads(payload)
             except Exception:
                 return
+            # Take the screenshot BEFORE session.add(): the dedup logic in
+            # session.add() may merge two consecutive fills, and we want
+            # the screenshot tied to the dict that survives the merge.
+            await _capture_screenshot(snap, len(session.actions) + 1)
             label = session.add(snap)
             count = len(session.actions)
             for pg in context.pages:
@@ -781,6 +839,7 @@ def record_to_config_sync(
     out_path: Optional[str] = None,
     headless: bool = False,
     save_events: bool = True,
+    capture_screenshots: bool = True,
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
 ) -> tuple[dict, list[dict]]:
@@ -792,6 +851,7 @@ def record_to_config_sync(
         save_events=save_events,
         proxy=proxy,
         chrome_profile=chrome_profile,
+        capture_screenshots=capture_screenshots,
     ))
 
 
@@ -812,6 +872,11 @@ def main() -> None:
     p.add_argument("--wait-for", default=None)
     p.add_argument("--headless", action="store_true")
     p.add_argument("--no-events", action="store_true")
+    p.add_argument(
+        "--no-screenshots",
+        action="store_true",
+        help="Disable per-step viewport screenshots (default: capture into <out>_shots/).",
+    )
     p.add_argument(
         "--chrome-profile",
         help="Path to a Chrome user-data-dir to reuse cookies/proxy/extensions.",
@@ -835,6 +900,7 @@ def main() -> None:
         out_path=out_path,
         headless=args.headless,
         save_events=not args.no_events,
+        capture_screenshots=not args.no_screenshots,
         proxy=proxy,
         chrome_profile=getattr(args, 'chrome_profile', None),
     )

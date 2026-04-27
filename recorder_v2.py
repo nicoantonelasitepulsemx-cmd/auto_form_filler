@@ -648,6 +648,14 @@ async def record_to_config(
         except Exception:
             shots_dir = None
 
+    # Smart-wait scratch state. Whenever the user fires a click/submit-ish
+    # action, we mark ``_recently_acted_at`` and the framenavigated handler
+    # treats any navigation within the next ``_NAV_WINDOW_MS`` as a
+    # consequence of that action — it then injects a synthetic ``wait``
+    # action right after it so the replay engine waits for the load.
+    _NAV_WINDOW_MS = 1500
+    _recently_acted_at: list[int] = [0]   # mutable cell so closures can update it
+
     async with async_playwright() as p:
         browser = None
         if chrome_profile:
@@ -715,6 +723,11 @@ async def record_to_config(
             # the screenshot tied to the dict that survives the merge.
             await _capture_screenshot(snap, len(session.actions) + 1)
             label = session.add(snap)
+            # Mark this moment so framenavigated knows whose navigation
+            # this is. Only navigation-prone kinds count.
+            kind = (snap.get("kind") or "").lower()
+            if kind in ("submit", "click"):
+                _recently_acted_at[0] = int(time.time() * 1000)
             count = len(session.actions)
             for pg in context.pages:
                 try:
@@ -724,6 +737,35 @@ async def record_to_config(
                     )
                 except Exception:
                     pass
+
+        def _on_frame_navigated(frame: Any) -> None:
+            """Inject a synthetic wait action when a navigation follows a click/submit.
+
+            Only the *main* frame counts; subframe navigations are too
+            chatty (analytics iframes etc.) and would pollute the action
+            stream.
+            """
+            try:
+                if frame.parent_frame is not None:
+                    return  # not the top frame
+                now = int(time.time() * 1000)
+                if now - _recently_acted_at[0] > _NAV_WINDOW_MS:
+                    return  # no recent action — likely the initial page.goto
+                # Only inject one wait per click burst.
+                if session.actions and session.actions[-1].get("kind") == "wait" \
+                        and session.actions[-1].get("wait_kind") == "navigation":
+                    return
+                session.actions.append({
+                    "kind": "wait",
+                    "wait_kind": "navigation",
+                    "timeout_ms": 15000,
+                    "ts": now,
+                    "_synthetic": True,
+                })
+                # Reset so we don't double-inject for chained redirects.
+                _recently_acted_at[0] = 0
+            except Exception:
+                pass
 
         async def on_finish() -> None:
             if not fut.done():
@@ -777,6 +819,11 @@ async def record_to_config(
 
         page.on("close", _on_close)
         context.on("close", lambda _c: _on_close(None))
+        # Smart-wait: detect navigations that follow a captured click/submit
+        # and inject a synthetic wait action so replay knows to wait too.
+        page.on("framenavigated", _on_frame_navigated)
+        # Also attach the handler to any future page (multi-tab flows).
+        context.on("page", lambda _p: _p.on("framenavigated", _on_frame_navigated))
 
         try:
             await page.goto(target_url, wait_until="domcontentloaded")

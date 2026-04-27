@@ -776,6 +776,29 @@ async def run_action(
     fid  = action.get("field_id", "<unnamed>")
 
     if kind == "wait":
+        # Smart-wait kinds (set by the recorder when a navigation / network
+        # idle / DOM burst is observed right after an action). Fall back to
+        # the legacy duration_ms sleep when wait_kind is missing.
+        wait_kind = (action.get("wait_kind") or "").strip().lower()
+        timeout_ms = int(action.get("timeout_ms", 15000))
+        if wait_kind in ("navigation", "domcontentloaded", "load", "networkidle"):
+            tgt = "domcontentloaded" if wait_kind in ("navigation", "domcontentloaded") else wait_kind
+            logger.info(f"[WAIT] for_load_state={tgt!r} (timeout {timeout_ms} ms)")
+            if not dry_run:
+                try:
+                    await page.wait_for_load_state(tgt, timeout=timeout_ms)
+                except Exception as exc:
+                    logger.warning(f"  [WAIT] {tgt} timed out: {exc!r}")
+            return True
+        if wait_kind == "selector":
+            sel = action.get("selector") or ""
+            logger.info(f"[WAIT] selector={sel!r} (timeout {timeout_ms} ms)")
+            if not dry_run and sel:
+                try:
+                    await page.wait_for_selector(sel, timeout=timeout_ms)
+                except Exception as exc:
+                    logger.warning(f"  [WAIT] selector {sel!r} timed out: {exc!r}")
+            return True
         ms = int(action.get("duration_ms", 250))
         logger.info(f"[WAIT] {ms} ms")
         if not dry_run:
@@ -861,6 +884,14 @@ async def run_actions(
 
     Between actions we sleep for ``action_delay_ms + rand(0..action_jitter_ms)``
     to mimic human pacing — important for FB-style anti-bot heuristics.
+
+    After actions that *can* trigger navigation (any ``submit`` / ``click``
+    that lands on a button-like element) we also call
+    ``page.wait_for_load_state('domcontentloaded')`` with a short timeout.
+    This is a defensive auto-wait that helps replay survive lazy-loading
+    pages without the recording having to capture explicit waits. It
+    short-circuits silently if the page never navigated — nothing breaks
+    when the click did not cause a load.
     """
     filled = 0
     skipped = 0
@@ -874,6 +905,13 @@ async def run_actions(
             skipped += 1
             if stop_on_fail:
                 break
+        # Auto-settle after navigation-prone actions.
+        if not dry_run and ok and _action_may_navigate(action):
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                # Page didn't navigate — expected for non-link clicks.
+                pass
         # Pause before the next action (skip after the last one).
         if i < len(actions) - 1 and not dry_run:
             base = max(0, int(action_delay_ms))
@@ -881,6 +919,25 @@ async def run_actions(
             extra = random.randint(0, jitter) if jitter > 0 else 0
             await asyncio.sleep((base + extra) / 1000.0)
     return filled, skipped
+
+
+def _action_may_navigate(action: dict) -> bool:
+    """Heuristic: does this action plausibly trigger navigation/page load?"""
+    kind = (action.get("kind") or "").lower()
+    if kind == "submit":
+        return True
+    if kind != "click":
+        return False
+    fp = action.get("fingerprint") or {}
+    tag = (fp.get("tag") or "").lower()
+    role = (fp.get("role") or "").lower()
+    if tag == "a" or tag == "button":
+        return True
+    if role in ("link", "button"):
+        return True
+    # Anything that looks like a submit by text — heuristic from recorder.
+    name = (fp.get("accessible_name") or "").lower()
+    return any(k in name for k in ("submit", "send", "continue", "next", "gửi", "tiếp"))
 
 
 __all__ = ["run_action", "run_actions"]

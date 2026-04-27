@@ -33,7 +33,12 @@ from typing import Any, Optional
 
 import auto_fill
 from logger import get_logger
-from proxy_utils import build_playwright_proxy, mask_proxy, parse_proxy_string
+from proxy_utils import (
+    build_playwright_proxy,
+    load_proxy_dicts,
+    mask_proxy,
+    parse_proxy_string,
+)
 
 # --------------------------------------------------------------------------------------
 #  Field-type / strategy dictionaries shown in dropdowns
@@ -914,6 +919,47 @@ class AutoFillGUI(tk.Tk):
         self.run_pool_btn = ttk.Button(ma_row, text="▶ Run pool", command=self.cmd_run_pool)
         self.run_pool_btn.grid(row=0, column=5, sticky="w", padx=(8, 0))
         ma_row.columnconfigure(1, weight=1)
+
+        # ---------- Proxy pool row (multi-proxy parallel run) ----------
+        pp_row = ttk.LabelFrame(
+            self,
+            text="Proxy pool — run N pages in parallel, one proxy per page",
+            padding=6,
+        )
+        pp_row.pack(fill="x", padx=8, pady=(2, 0), before=outer_paned)
+        ttk.Label(pp_row, text="proxies file:").grid(row=0, column=0, sticky="w")
+        self.proxy_pool_path_var = tk.StringVar()
+        ttk.Entry(pp_row, textvariable=self.proxy_pool_path_var, width=40).grid(
+            row=0, column=1, sticky="we", padx=(4, 4)
+        )
+        ttk.Button(pp_row, text="…", width=3, command=self.cmd_pick_proxy_pool).grid(
+            row=0, column=2, sticky="w"
+        )
+        ttk.Button(pp_row, text="Validate", width=9, command=self.cmd_validate_proxy_pool).grid(
+            row=0, column=3, sticky="w", padx=(4, 0)
+        )
+        ttk.Label(pp_row, text="parallel:").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        self.proxy_pool_workers_var = tk.StringVar(value="")
+        ttk.Entry(pp_row, textvariable=self.proxy_pool_workers_var, width=4).grid(
+            row=0, column=5, sticky="w", padx=(4, 0)
+        )
+        self.proxy_pool_persistent_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            pp_row, text="separate profiles", variable=self.proxy_pool_persistent_var,
+        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
+        self.run_proxy_pool_btn = ttk.Button(
+            pp_row, text="▶ Run multi-proxy", command=self.cmd_run_proxy_pool,
+        )
+        self.run_proxy_pool_btn.grid(row=0, column=7, sticky="w", padx=(8, 0))
+        ttk.Label(
+            pp_row,
+            text=(
+                "Format per line: host:port:user:pass  (also accepts "
+                "http://user:pass@host:port, host:port, etc.)"
+            ),
+            foreground="#777",
+        ).grid(row=1, column=0, columnspan=8, sticky="w", pady=(4, 0))
+        pp_row.columnconfigure(1, weight=1)
 
         # ---------- Bottom: run controls (above the log so they stay visible) ----------
         bot = ttk.Frame(self, padding=(8, 4))
@@ -1825,6 +1871,8 @@ class AutoFillGUI(tk.Tk):
 
     def _on_run_finished(self) -> None:
         self.run_btn.configure(state="normal")
+        if hasattr(self, "run_proxy_pool_btn"):
+            self.run_proxy_pool_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.status_var.set("Ready.")
 
@@ -1922,8 +1970,169 @@ class AutoFillGUI(tk.Tk):
     def _on_pool_finished(self) -> None:
         self.run_btn.configure(state="normal")
         self.run_pool_btn.configure(state="normal")
+        self.run_proxy_pool_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.status_var.set("Ready.")
+
+    # ------------------------------------------------------------------ multi-proxy run
+
+    def cmd_pick_proxy_pool(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select proxies file (host:port:user:pass per line)",
+            filetypes=[
+                ("Text / proxy list", "*.txt *.list *.proxies *.csv"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path:
+            self.proxy_pool_path_var.set(path)
+
+    def cmd_validate_proxy_pool(self) -> None:
+        """Parse the selected proxy file and report how many proxies are valid."""
+        path = self.proxy_pool_path_var.get().strip()
+        if not path:
+            messagebox.showinfo("Proxy pool", "Pick a proxies file first.")
+            return
+        if not Path(path).exists():
+            messagebox.showwarning("Proxy pool", f"File not found:\n{path}")
+            return
+        try:
+            proxies = load_proxy_dicts(path, on_error="silent")
+        except Exception as exc:
+            messagebox.showerror("Proxy pool", f"Failed to parse:\n{exc}")
+            return
+        if not proxies:
+            messagebox.showwarning(
+                "Proxy pool",
+                "No valid proxies parsed. Each line must be like\n"
+                "host:port:user:pass  (or http://user:pass@host:port).",
+            )
+            return
+        sample = "\n".join(f"  {i + 1}. {mask_proxy(p)}" for i, p in enumerate(proxies[:8]))
+        more = "" if len(proxies) <= 8 else f"\n  … {len(proxies) - 8} more"
+        self._log_local(f"[PROXY-POOL] {len(proxies)} proxy/ies parsed from {path}")
+        messagebox.showinfo(
+            "Proxy pool",
+            f"Parsed {len(proxies)} proxy/ies:\n\n{sample}{more}",
+        )
+
+    def cmd_run_proxy_pool(self) -> None:
+        """Run the current config in parallel — one BrowserContext per proxy."""
+        if self.runner_thread and self.runner_thread.is_alive():
+            return
+        path = self.proxy_pool_path_var.get().strip()
+        if not path or not Path(path).exists():
+            messagebox.showwarning("Proxy pool", "Pick a valid proxies file first.")
+            return
+
+        self._commit_field_value()
+        self._commit_top_level()
+        if not self.config_data.get("target_url"):
+            messagebox.showwarning("Missing URL", "Please set a target_url before running.")
+            return
+
+        try:
+            workers = int(self.proxy_pool_workers_var.get().strip() or 0)
+        except ValueError:
+            workers = 0
+
+        config_snapshot = copy.deepcopy(self.config_data)
+        # Don't double-apply the single-proxy fields when running the pool —
+        # each worker uses its own proxy from the file.
+        config_snapshot.pop("proxy", None)
+        config_snapshot.pop("proxy_list", None)
+        config_snapshot.pop("proxy_rotate", None)
+
+        engine_logger = get_logger(debug=bool(self.debug_var.get()))
+        for h in list(engine_logger.handlers):
+            if isinstance(h, QueueLogHandler):
+                engine_logger.removeHandler(h)
+        engine_logger.addHandler(QueueLogHandler(self.log_queue))
+
+        headless = bool(self.headless_var.get())
+        dry_run = bool(self.dry_run_var.get())
+        debug = bool(self.debug_var.get())
+        persistent = bool(self.proxy_pool_persistent_var.get())
+
+        self.run_btn.configure(state="disabled")
+        self.run_pool_btn.configure(state="disabled")
+        self.run_proxy_pool_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self.status_var.set("Running multi-proxy…")
+        self._log_local(
+            f"[PROXY-POOL] starting with proxies={path} parallel={workers or 'auto'} "
+            f"profiles={'separate' if persistent else 'ephemeral'}"
+        )
+
+        def worker() -> None:
+            try:
+                from accounts import accounts_from_proxies
+                from worker_pool import Task, WorkerPool
+
+                proxies = load_proxy_dicts(path, on_error="warn")
+                if not proxies:
+                    self.log_queue.put_nowait(
+                        "[PROXY-POOL] no valid proxies — aborting"
+                    )
+                    return
+                self.log_queue.put_nowait(
+                    f"[PROXY-POOL] loaded {len(proxies)} proxy/ies"
+                )
+
+                udd_template = None
+                if persistent:
+                    base = Path.home() / ".auto_form_filler_profiles"
+                    base.mkdir(parents=True, exist_ok=True)
+                    udd_template = str(base / "{name}")
+
+                accts = accounts_from_proxies(
+                    proxies,
+                    headless=headless,
+                    user_data_dir_template=udd_template,
+                )
+                tasks = [
+                    Task(config=config_snapshot, vars=dict(a.vars), label=a.name)
+                    for a in accts
+                ]
+                self.log_queue.put_nowait(
+                    f"[PROXY-POOL] {len(tasks)} task(s) queued, "
+                    f"max concurrency={workers or len(accts)}"
+                )
+
+                def report(evt: str, payload: dict) -> None:
+                    bits = [f"[{evt}]"]
+                    for k in ("account", "label", "ok", "filled", "skipped",
+                              "attempts", "duration_s", "error", "proxy"):
+                        if k in payload and payload[k] is not None:
+                            bits.append(f"{k}={payload[k]!r}")
+                    self.log_queue.put_nowait(" ".join(bits))
+
+                pool = WorkerPool(
+                    accts,
+                    max_concurrency=workers or len(accts),
+                    report_cb=report,
+                    dry_run=dry_run,
+                    debug=debug,
+                )
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                self.runner_loop = loop
+                self.runner_task = loop.create_task(pool.run_tasks(tasks))
+                results = loop.run_until_complete(self.runner_task)
+                ok = sum(1 for r in results if r.ok)
+                self.log_queue.put_nowait(
+                    f"[PROXY-POOL] done — {ok}/{len(results)} task(s) succeeded"
+                )
+            except Exception as exc:
+                self.log_queue.put_nowait(f"[PROXY-POOL_ERR] {exc!r}")
+            finally:
+                self.runner_loop = None
+                self.runner_task = None
+                self.after(0, self._on_pool_finished)
+
+        self.runner_thread = threading.Thread(target=worker, daemon=True)
+        self.runner_thread.start()
 
     # ------------------------------------------------------------------ log queue draining
 

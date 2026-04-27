@@ -716,12 +716,6 @@ class AutoFillGUI(tk.Tk):
         ttk.Checkbutton(row3, text="submit after fill", variable=self.submit_var).pack(side="left", padx=(8, 0))
         self.captcha_pause_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(row3, text="pause on CAPTCHA", variable=self.captcha_pause_var).pack(side="left", padx=(8, 0))
-        self.captcha_solver_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            row3,
-            text="auto-solve (audio)",
-            variable=self.captcha_solver_var,
-        ).pack(side="left", padx=(8, 0))
         ttk.Label(row3, text="    Screenshot:").pack(side="left", padx=(20, 0))
         self.screenshot_var = tk.StringVar()
         ttk.Entry(row3, textvariable=self.screenshot_var, width=28).pack(side="left", padx=(4, 0))
@@ -1848,7 +1842,6 @@ class AutoFillGUI(tk.Tk):
             profile=None,
             chrome_profile=chrome_profile,
             no_captcha_pause=not bool(self.captcha_pause_var.get()),
-            captcha_solver="audio" if bool(self.captcha_solver_var.get()) else "off",
             proxy=None,                         # GUI uses config["proxy"] directly
             proxy_list=None,
             proxy_rotate=None,

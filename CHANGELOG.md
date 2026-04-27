@@ -1,48 +1,5 @@
 # Changelog
 
-## Free, offline CAPTCHA auto-solver (Buster-style audio bypass)
-
-Optional opt-in auto-solver for **reCAPTCHA v2** that runs entirely
-offline — no API costs, no third-party services.
-
-### What it does
-- Detects reCAPTCHA v2, switches the challenge to its **audio** variant,
-  downloads the mp3, transcribes it with [`faster-whisper`][fw]
-  (`tiny.en` quantised int8, ~75 MB, CPU), and types the answer.
-- Solves simple math/text challenges (e.g. `5 + 3 = ?`) locally without
-  the model.
-- Falls back to the existing pause-for-human banner if Google blocks
-  audio bypass on the IP/UA, if Whisper can't transcribe, or for any
-  unsupported CAPTCHA kind.
-
-[fw]: https://github.com/SYSTRAN/faster-whisper
-
-### What it explicitly does NOT do
-- hCaptcha, Cloudflare Turnstile, FunCaptcha/Arkose, reCAPTCHA v3 — these
-  are explicitly skipped (open-source solvers for them have <40% success
-  and trip behavioural detectors).
-
-### How to enable
-- CLI: `auto_fill.py --captcha-solver=audio` (default `off`).
-- GUI: tick **auto-solve (audio)** next to **pause on CAPTCHA**.
-- Whisper weights download to `~/.cache/huggingface` on first audio
-  solve (~75 MB, one time).
-
-### Realistic expectations
-~50-70% in the field. Google detects datacenter IPs and obvious
-automation and shows "Try again later" instead of an audio panel; the
-solver detects this and bails cleanly into pause-for-human. Pair the
-solver with residential proxies + a real Chrome profile for best
-results.
-
-### Files touched
-- New `captcha_solver.py` (~370 lines).
-- `auto_fill.py`: new `--captcha-solver` flag, wired into
-  `_maybe_handle_captcha` ahead of pause-for-human.
-- `auto_fill_gui.py`: new **auto-solve (audio)** checkbox.
-- `requirements.txt`: optional `faster-whisper>=1.0.0`.
-- `README.md`: usage + caveats section.
-
 ## Multi-proxy parallel runs (Proxy pool)
 
 The pool runner can now drive **N parallel browser contexts, one proxy per

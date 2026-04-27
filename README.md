@@ -119,11 +119,36 @@ Behaviour:
   `pause_on_captcha: false` in the config, or uncheck **pause on CAPTCHA**
   in the GUI.
 
-This tool **does not solve CAPTCHAs automatically** — by design. CAPTCHAs
-exist to require human interaction; bypassing them is against most sites'
-terms of service. The pause-for-human flow is a pragmatic middle ground:
-you stay in the loop for the part that requires a human, the tool handles
-everything else.
+### Optional: free, offline auto-solver (audio bypass)
+
+Pass `--captcha-solver=audio` (CLI) or tick **auto-solve (audio)** in the
+GUI to enable a Buster-style audio bypass. When the engine sees a
+reCAPTCHA v2, it switches the challenge to its audio variant, downloads
+the mp3, transcribes it locally with [`faster-whisper`][fw] (`tiny.en`
+model, ~75 MB, runs on CPU, no API or network outbound after model
+download), and submits the answer.
+
+[fw]: https://github.com/SYSTRAN/faster-whisper
+
+Realistic expectations:
+- Works only on **reCAPTCHA v2**. hCaptcha, Turnstile, FunCaptcha are
+  not attempted.
+- Success rate ~50-70% in the field. Google detects datacenter IPs and
+  obvious automation and may show **"Try again later"** instead of an
+  audio panel — when that happens, the solver bails and falls back to
+  the human-pause banner exactly like before.
+- Math/text challenges (e.g. `5 + 3 = ?`) are solved locally, no model
+  needed, no API calls.
+- The first audio solve downloads the Whisper model; subsequent solves
+  reuse the cached weights from `~/.cache/huggingface`.
+
+If you want max success rate, combine `--captcha-solver=audio` with:
+- residential proxies (not datacenter)
+- a real Chrome profile (`--chrome-profile`) that already has a session
+- `humanize: true` in the config (default)
+
+Otherwise — keep auto-solve **off** and rely on the human-pause banner.
+That's the safe default and is rate-limit-friendly.
 
 ## Standalone executable (PyInstaller)
 

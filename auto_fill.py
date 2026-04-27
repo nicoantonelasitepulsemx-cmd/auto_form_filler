@@ -28,6 +28,7 @@ from playwright.async_api import (
 
 from accounts import accounts_from_proxies, load_accounts
 from captcha import detect_captcha, pause_for_human
+from captcha_solver import solve_captcha
 from logger import get_logger
 from proxy_utils import (
     add_cli_args as _add_proxy_cli_args,
@@ -292,14 +293,38 @@ async def submit_form(page: Page, config: dict, logger) -> None:
 
 
 async def _maybe_handle_captcha(page, args, config, logger) -> None:
-    """Detect and (optionally) pause for any CAPTCHA on the current page."""
+    """Detect and (optionally) pause for any CAPTCHA on the current page.
+
+    Order of operations:
+        1. Detect what kind of CAPTCHA, if any, is on the page.
+        2. If ``--captcha-solver=openai`` (or ``captcha_solver="openai"`` in
+           config) and a key is available, try to solve it autonomously.
+        3. If the solver fails or is disabled, fall back to the
+           pause-for-human banner (unless that's also disabled).
+    """
+    kind = await detect_captcha(page)
+    if not kind:
+        return
+
+    # Auto-solve attempt (only when explicitly enabled).
+    solver_mode = (
+        getattr(args, "captcha_solver", None)
+        or config.get("captcha_solver", "off")
+    )
+    if solver_mode == "audio":
+        try:
+            solved = await solve_captcha(page, kind, logger)
+        except Exception as exc:
+            logger.warning(f"[CAPTCHA-SOLVER] crashed: {exc!r}")
+            solved = False
+        if solved:
+            return
+        logger.info("[CAPTCHA-SOLVER] couldn't auto-solve — falling back")
+
     pause_enabled = (
         getattr(args, "no_captcha_pause", False) is False
         and config.get("pause_on_captcha", True)
     )
-    kind = await detect_captcha(page)
-    if not kind:
-        return
     if not pause_enabled:
         logger.warning(f"[CAPTCHA] detected {kind!r} but pause is disabled — continuing")
         return
@@ -621,6 +646,18 @@ def parse_args() -> argparse.Namespace:
         "--no-captcha-pause",
         action="store_true",
         help="Disable the pause-for-human banner when a CAPTCHA is detected.",
+    )
+    p.add_argument(
+        "--captcha-solver",
+        choices=["off", "audio"],
+        default=None,
+        help=(
+            "Auto-solve CAPTCHAs before falling back to pause-for-human. "
+            "'audio' uses a Buster-style audio bypass for reCAPTCHA v2 "
+            "(faster-whisper tiny.en, ~75 MB model, offline, free). "
+            "Math/text challenges are also solved locally. "
+            "hCaptcha / Turnstile / FunCaptcha are NOT supported."
+        ),
     )
     grp = p.add_argument_group("multi-account")
     grp.add_argument(

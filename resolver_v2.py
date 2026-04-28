@@ -46,6 +46,7 @@ _STRATEGY_WEIGHT: dict[str, int] = {
     "data_testid": 100,
     "id":           95,
     "stable_id":    95,
+    "name_value":   92,   # [name="..."][value="..."] for radio/checkbox siblings
     "name":         90,
     "role_name":    85,
     "role":         80,
@@ -134,7 +135,7 @@ async def _strategy_locators(
         # Locator with multiple matches; we'll iterate by index later.
         return loc
 
-    if s in ("css", "id", "name", "type", "value", "nth", "data_testid",
+    if s in ("css", "id", "name", "name_value", "type", "value", "nth", "data_testid",
              "placeholder", "aria_label", "aria_placeholder"):
         return [frame.locator(selector)]
 

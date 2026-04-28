@@ -90,8 +90,7 @@ async def _cmd_mint(args: argparse.Namespace) -> int:
 
 
 async def _cmd_new_address(args: argparse.Namespace) -> int:
-    creds = _load_creds(args.creds)
-    k = await Kuku.from_requests(creds=creds)
+    k = await _make_client(args)
     addr = await k.create_address(domain=args.domain)
     creds = k.credentials()
     creds.current_address = addr
@@ -101,8 +100,8 @@ async def _cmd_new_address(args: argparse.Namespace) -> int:
 
 
 async def _cmd_list(args: argparse.Namespace) -> int:
-    creds = _load_creds(args.creds)
-    k = await Kuku.from_requests(creds=creds)
+    k = await _make_client(args)
+    creds = k.credentials()
     address = args.address or creds.current_address
     if not address:
         print("error: no address (pass --address or set current_address)", file=sys.stderr)
@@ -120,8 +119,8 @@ async def _cmd_list(args: argparse.Namespace) -> int:
 
 
 async def _cmd_wait_code(args: argparse.Namespace) -> int:
-    creds = _load_creds(args.creds)
-    k = await Kuku.from_requests(creds=creds)
+    k = await _make_client(args)
+    creds = k.credentials()
     address = args.address or creds.current_address
     if not address:
         print("error: no address provided/known", file=sys.stderr)

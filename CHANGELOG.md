@@ -1,5 +1,142 @@
 # Changelog
 
+## Disposable mail per proxy + automatic OTP paste (kuku.lu)
+
+A new module + matching recorder/replay paths so each proxy/account
+gets its own throw-away mailbox and OTP codes are pulled in
+automatically without copy/paste.
+
+- New `kuku_lu.py` module:
+  - `KukuCreds` — persistable identity (`csrf_token` + `sessionhash`).
+  - `Kuku` client with two backends: `from_playwright(page)` (preferred,
+    inherits the browser's Cloudflare clearance) and `from_requests()`
+    (lightweight HTTP, falls through cleanly when challenged).
+  - `create_address(domain=None)` — mint a disposable alias.
+  - `wait_for_code(address, regex, timeout, from_filter)` — poll the
+    inbox until a matching code arrives, then return the captured
+    group.
+- `accounts.py` learns about `Account.kuku: KukuCreds | None` so each
+  proxy worker can use its own inbox during parallel replay.
+- New `kuku_lu_cli.py` for shell-side provisioning:
+  ```
+  python kuku_lu_cli.py mint --out kuku_acct1.json
+  python kuku_lu_cli.py wait-code --creds kuku_acct1.json --from facebook
+  ```
+- `recorder_v2.py` gains a blue **"✎ Get OTP → paste"** button on the
+  floating panel when started with `--kuku-creds <path>`. Click any OTP
+  input, press the panel button, the recorder fetches the latest code
+  from kuku.lu and types it into the field — and saves the action as
+  `kind="otp_paste"` so replay does the same per-account on every run.
+  CLI flags: `--kuku-creds`, `--kuku-from`, `--kuku-regex`,
+  `--kuku-timeout-ms`, `--kuku-address`.
+- `replay_engine.py` handles `kind="otp_paste"`: looks up
+  `ctx["_kuku"]` (a pre-built client) or `ctx["_kuku_creds"]` (a
+  `KukuCreds` to build one against the current page), resolves the
+  field, polls kuku.lu, then routes through the existing
+  `_do_fill` self-heal so the typed code survives React-controlled
+  inputs.
+- Tests:
+  - `test_kuku_lu.py` spins up an `aiohttp` server emulating kuku.lu's
+    four endpoints and exercises `create_address`, `list_mails`,
+    `read_mail`, `wait_for_code`, plus the `KukuCreds` round-trip and
+    the resume-from-creds path.
+  - `test_otp_paste_replay.py` exercises the replay engine end-to-end
+    against the same fake server with a real Playwright page,
+    verifying the code lands in the input AND the recorded-value
+    fallback when no Kuku is supplied.
+
+## Windows 11 polish
+
+A pass over the recorder + GUI to make the tool feel native on Windows
+11. None of these are bug fixes per se — the tool already ran on
+Windows — but they remove the most common rough edges users hit:
+
+- `auto_fill_gui` now opts into per-monitor DPI awareness on Windows
+  (`SetProcessDpiAwareness(2)`) before the first `tk.Tk()` so text is
+  crisp on 1.5x / 2.0x displays instead of bitmap-stretched.
+- All preference reads/writes (`THEME_PREF_FILE`, `LAYOUT_PREF_FILE`,
+  `RECENT_FILES_FILE`) explicitly use `encoding="utf-8"` so the GUI no
+  longer depends on the user's `cp1252` codepage.
+- `recorder_v2._is_chrome_user_data_dir` accepts both casings of
+  `Local State` (Chrome occasionally writes mixed case across versions)
+  so passing `C:\Users\...\google\chrome\user data` is fine even when
+  Windows preserves it lowercased.
+- `recorder_v2._check_chrome_profile_lock` detects an in-use Chrome
+  profile (`SingletonLock` / `SingletonCookie` / `SingletonSocket` /
+  `lockfile`) BEFORE Playwright tries to launch and raises a clear
+  message — no more 30 second hang ending in `ProcessSingleton`.
+- New `recorder_v2._default_chrome_user_data_dir` returns the most
+  likely User Data path for the current OS, so the GUI's recorder
+  dialog can pre-fill the field on Windows
+  (`%LOCALAPPDATA%\Google\Chrome\User Data`).
+- New `--shots-dir` CLI flag (and `shots_dir_override=` kwarg) lets the
+  user redirect per-step screenshots out of the config's parent. The
+  default path now also probes for write access and falls back to the
+  system temp dir when the parent is read-only — typical for configs
+  living inside a OneDrive sync folder on Windows.
+- The recorder's floating panel adds `pointer-events: auto`,
+  `isolation: isolate` and `transform: translateZ(0)` to its CSS so
+  iframes / parent transforms can't hide it on Edge in Windows.
+
+## Recorder accuracy: multi-checkbox groups & dynamic IDs
+
+The recorder used to mis-identify the *target* of a click whenever a form
+had several radios/checkboxes sharing a single `name` attribute (e.g.
+Facebook's trademark report form, where four `content_type[]` checkboxes
+sit inside one fieldset). The first input under the click's container was
+always picked, so all four "Content You Want to Report" actions ended up
+pointing at the *same* checkbox at replay time.
+
+The fix touches the recorder, the resolver, the fingerprint, and the GUI:
+
+- `recorder_v2.OVERLAY_JS`
+  - `_findAssociatedInput()` now picks the right hidden input even when
+    several share a parent: it prefers the input whose own wrapping label's
+    bounding box contains the click point, then falls back to the closest
+    input by Euclidean distance to the click coordinates.
+  - The proxy-click branch always carries the `value` attribute now (not
+    just for radios), so checkboxes that share a `name` (e.g.
+    `content_type[]`) are disambiguated at replay time.
+  - The change handler also carries `_hidden_input_name` /
+    `_hidden_input_type` / `radio_value` so the replay engine's
+    JS-direct-set fallback can target the right sibling.
+  - New compound selector `name_value` →
+    `[name="..."][value="..."]` (weight 92) emitted for every
+    radio/checkbox with both attributes — the strongest natural identity
+    short of an `id`.
+  - Click coordinates are tracked from `pointerdown` and `click`; a new
+    `click_position` field (% within the target's bounding box) is shipped
+    on every `click` / `submit` / `check` action as a future-proof
+    tiebreaker.
+  - `looksRandom()` now rejects Facebook React internals (`u_0_K3`,
+    `u_0_12_D3`, `u_0_h_K8`, `u_0_2_G/`), long all-digit ids and
+    decimal-suffixed numerics (`1112475925434379.0`), so the recorder no
+    longer commits FB's volatile dynamic ids as `stable_id` selectors.
+  - `labelTextFor()` now strips nested form controls before reading
+    `innerText`, so each checkbox in a fieldset gets its own distinct
+    accessible name (previously all four read out the same combined
+    label).
+  - The click handler short-circuits when its target is a *real* input
+    (`<input type=checkbox|radio>`) — labels emit a synthetic click on
+    the underlying input which used to make the proxy branch fire twice.
+
+- `element_fingerprint.FINGERPRINT_JS`: the captured attributes set now
+  includes `value` for radios/checkboxes only, so the resolver's
+  attribute-match score correctly differentiates siblings.
+
+- `resolver_v2._STRATEGY_WEIGHT`: `name_value` is registered at weight
+  92, slotting it just below `data_testid` / `id` and above the bare
+  `name` strategy.
+
+- `auto_fill_gui`: the "submit after fill" checkbox auto-enables when
+  the loaded config carries a captured `submit` block. The state is
+  persisted to the JSON as `submit_after_fill` so re-loading restores
+  the user's preference.
+
+A regression test (`test_recorder_checkbox_group.py`) reproduces the
+Facebook-style 4-checkbox group end-to-end and asserts that all four
+options are checked after replay.
+
 ## Multi-proxy parallel runs (Proxy pool)
 
 The pool runner can now drive **N parallel browser contexts, one proxy per

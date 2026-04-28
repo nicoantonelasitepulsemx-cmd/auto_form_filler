@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from kuku_lu import KukuCreds
+
 
 @dataclass
 class Account:
@@ -39,11 +41,18 @@ class Account:
     headless: bool = False
     viewport: dict[str, int] = field(default_factory=lambda: {"width": 1280, "height": 800})
     user_agent: Optional[str] = None
+    # Optional kuku.lu disposable-mail identity for this account.
+    # Used by the OTP integration so each proxy/account drains its own inbox.
+    kuku: Optional[KukuCreds] = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Account":
         if "name" not in d or not d["name"]:
             raise ValueError("account is missing 'name'")
+        kuku_data = d.get("kuku")
+        kuku: Optional[KukuCreds] = None
+        if isinstance(kuku_data, dict) and kuku_data.get("csrf_token"):
+            kuku = KukuCreds.from_dict(kuku_data)
         return cls(
             name=str(d["name"]),
             user_data_dir=d.get("user_data_dir"),
@@ -54,6 +63,7 @@ class Account:
             headless=bool(d.get("headless", False)),
             viewport=dict(d.get("viewport") or {"width": 1280, "height": 800}),
             user_agent=d.get("user_agent"),
+            kuku=kuku,
         )
 
 

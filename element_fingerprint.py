@@ -69,10 +69,15 @@ FINGERPRINT_JS = r"""
 
   // Just the few attrs that meaningfully help disambiguate; we deliberately
   // avoid huge style/className blobs that change between record and replay.
+  // ``value`` is included for radios/checkboxes only — for free-text inputs
+  // the value depends on what the user typed at record time and shouldn't
+  // affect identity.
   const interesting = ["id","name","type","role","data-testid","aria-label",
-                       "placeholder","title","autocomplete"];
+                       "placeholder","title","autocomplete","value"];
   const attributes = {};
+  const _t = (el.getAttribute("type") || "").toLowerCase();
   for (const k of interesting) {
+    if (k === "value" && _t !== "radio" && _t !== "checkbox") continue;
     const v = el.getAttribute(k);
     if (v != null) attributes[k] = v;
   }

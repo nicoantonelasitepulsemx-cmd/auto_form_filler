@@ -92,6 +92,54 @@ radio) is captured along with its value. When you're finished, click
 with is appended to the GUI as a complete config entry (including the
 value you typed). Save to disk and you're done.
 
+### One-time codes via kuku.lu disposable mail
+
+The recorder can mint a disposable address per session and paste OTP
+codes for you. m.kuku.lu is a free Japanese throw-away mail service —
+no signup, you keep an "account" by saving two cookies.
+
+1. **Provision an account** (one-time, per proxy/identity):
+   ```
+   python kuku_lu_cli.py mint --out kuku_acct1.json
+   ```
+   Save `kuku_acct1.json` somewhere safe — it contains the
+   `csrf_token` + `sessionhash` that identify this kuku.lu account
+   plus the disposable address that was minted.
+
+2. **Record with OTP support** by passing `--kuku-creds`:
+   ```
+   python recorder_v2.py --url https://m.facebook.com/help/contact \
+       --out trademark_form.json \
+       --kuku-creds kuku_acct1.json \
+       --kuku-from facebook
+   ```
+   The recorder panel gains a blue "✎ Get OTP → paste" button. While
+   recording: when you reach the confirmation-code field, click the
+   field once, then click the panel button. The recorder polls
+   kuku.lu, types the matching code into the input, and ships an
+   `kind="otp_paste"` action — so replay can re-fetch a fresh code
+   per account on every run.
+
+3. **Per-proxy mailboxes (multi-account replay).** Add a `kuku` block
+   next to each account in `accounts.json` so each proxy drains its
+   own inbox during parallel replay:
+   ```json
+   {
+     "name": "acct1",
+     "proxy": "http://user:pass@1.2.3.4:8080",
+     "kuku": { "csrf_token": "...", "sessionhash": "...", "current_address": "abc@kpay.be" }
+   }
+   ```
+   The replay engine (`replay_engine.run_action`) automatically
+   resolves OTP actions through the account's kuku creds — pass
+   `ctx={"_kuku_creds": account.kuku, ...}` from the orchestrator.
+
+> **Cloudflare note:** kuku.lu sometimes ships a Cloudflare challenge
+> on datacenter IPs. The recorder uses the same browser context as
+> the form recording itself, so it inherits any clearance cookie you
+> already solved interactively. For headless replay, run from a
+> residential IP or use `kuku_lu_cli.py --via-browser`.
+
 ## CAPTCHA detection + pause-for-human
 
 When the engine loads the form (and again right before/after submit), it

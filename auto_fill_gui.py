@@ -226,7 +226,7 @@ class AutoFillGUI(tk.Tk):
     def _load_theme_pref() -> str:
         try:
             if THEME_PREF_FILE.exists():
-                v = THEME_PREF_FILE.read_text().strip().lower()
+                v = THEME_PREF_FILE.read_text(encoding="utf-8").strip().lower()
                 if v in THEMES:
                     return v
         except Exception:
@@ -235,7 +235,7 @@ class AutoFillGUI(tk.Tk):
 
     def _save_theme_pref(self) -> None:
         try:
-            THEME_PREF_FILE.write_text(self.current_theme)
+            THEME_PREF_FILE.write_text(self.current_theme, encoding="utf-8")
         except Exception:
             pass
 
@@ -252,7 +252,7 @@ class AutoFillGUI(tk.Tk):
         data: dict = {}
         try:
             if LAYOUT_PREF_FILE.exists():
-                data = json.loads(LAYOUT_PREF_FILE.read_text())
+                data = json.loads(LAYOUT_PREF_FILE.read_text(encoding="utf-8"))
         except Exception:
             data = {}
 
@@ -322,7 +322,7 @@ class AutoFillGUI(tk.Tk):
                 data["right_sash"] = self._right_paned.sashpos(0)
             except Exception:
                 pass
-            LAYOUT_PREF_FILE.write_text(json.dumps(data))
+            LAYOUT_PREF_FILE.write_text(json.dumps(data), encoding="utf-8")
         except Exception:
             pass
 
@@ -406,7 +406,7 @@ class AutoFillGUI(tk.Tk):
     def _load_recent_files(self) -> list[str]:
         try:
             if RECENT_FILES_FILE.exists():
-                items = json.loads(RECENT_FILES_FILE.read_text())
+                items = json.loads(RECENT_FILES_FILE.read_text(encoding="utf-8"))
                 if isinstance(items, list):
                     return [str(p) for p in items if isinstance(p, str)][:RECENT_FILES_MAX]
         except Exception:
@@ -415,7 +415,10 @@ class AutoFillGUI(tk.Tk):
 
     def _save_recent_files(self) -> None:
         try:
-            RECENT_FILES_FILE.write_text(json.dumps(self._recent_files[:RECENT_FILES_MAX]))
+            RECENT_FILES_FILE.write_text(
+                json.dumps(self._recent_files[:RECENT_FILES_MAX]),
+                encoding="utf-8",
+            )
         except Exception:
             pass
 
@@ -1143,6 +1146,14 @@ class AutoFillGUI(tk.Tk):
         self.wait_var.set(self.config_data.get("wait_for_selector", "") or "")
         self.headless_var.set(bool(self.config_data.get("headless", False)))
         self.dry_run_var.set(bool(self.config_data.get("dry_run", True)))
+        # Auto-enable "submit after fill" when the loaded config carries a
+        # captured submit block.  Users can still untick it before running.
+        # Honour an explicit ``submit_after_fill`` flag in the config when present.
+        if "submit_after_fill" in self.config_data:
+            self.submit_var.set(bool(self.config_data.get("submit_after_fill")))
+        else:
+            submit_block = self.config_data.get("submit")
+            self.submit_var.set(bool(submit_block))
         proxy = self.config_data.get("proxy")
         if isinstance(proxy, dict):
             self.proxy_server_var.set(proxy.get("server", ""))
@@ -1276,6 +1287,7 @@ class AutoFillGUI(tk.Tk):
         self.config_data["wait_for_selector"] = self.wait_var.get()
         self.config_data["headless"] = bool(self.headless_var.get())
         self.config_data["dry_run"] = bool(self.dry_run_var.get())
+        self.config_data["submit_after_fill"] = bool(self.submit_var.get())
 
         # Proxy: store as a dict if any field is set, otherwise drop the key.
         server = self.proxy_server_var.get().strip()
@@ -2312,7 +2324,37 @@ class AutoFillGUI(tk.Tk):
 # --------------------------------------------------------------------------------------
 
 
+def _enable_windows_dpi_awareness() -> None:
+    """Make the GUI render crisply on Windows 11 high-DPI displays.
+
+    Tkinter without DPI awareness gets bitmap-stretched by Windows, which
+    makes text look blurry on 1.5x / 2.0x scaled monitors. Calling
+    ``SetProcessDpiAwareness(2)`` (PROCESS_PER_MONITOR_DPI_AWARE) before
+    the first ``tk.Tk()`` tells Windows we'll handle scaling ourselves and
+    hands us back full-resolution rendering. Best-effort — silently no-ops
+    on non-Windows hosts and on older Windows where the API is missing.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes  # type: ignore
+        # Per-monitor DPI awareness (Windows 8.1+); falls back to system
+        # awareness on Windows 7 via SetProcessDPIAware.
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            return
+        except Exception:
+            pass
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _enable_windows_dpi_awareness()
     initial = sys.argv[1] if len(sys.argv) > 1 else None
     app = AutoFillGUI(initial_config_path=initial)
     app.mainloop()

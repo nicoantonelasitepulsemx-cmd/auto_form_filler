@@ -113,6 +113,79 @@ def _interpolate(template: str, ctx: Mapping[str, Any]) -> str:
     return re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", sub, template)
 
 
+async def _fetch_otp_code(
+    page: Page,
+    action: dict,
+    ctx: Optional[Mapping[str, Any]],
+    *,
+    logger,
+) -> Optional[str]:
+    """Resolve the value for an ``otp_paste`` action.
+
+    Strategy (first wins):
+
+    1. ``ctx['_kuku']`` is a pre-built :py:class:`kuku_lu.Kuku` instance.
+       Use it directly — pure function, no network setup happens here.
+    2. ``ctx['_kuku_creds']`` is a :py:class:`kuku_lu.KukuCreds`. Build
+       a Playwright-backed client against the current ``page`` and reuse
+       it for the duration of this action.
+    3. Fall back to the literal ``action['value']`` recorded at capture
+       time. This is mostly useful for dry-runs and unit tests; in real
+       runs the recorded code has long since expired.
+
+    Returns the code as a string, or ``None`` when no path produces one
+    so the caller can skip cleanly.
+    """
+    source = action.get("source") or {}
+    if (source.get("kind") or "kuku.lu") != "kuku.lu":
+        logger.warning(f"  [otp] unknown source kind {source.get('kind')!r}; using recorded value")
+        return action.get("value") or None
+
+    address = source.get("address")
+    regex = source.get("regex") or r"(?<!\d)(\d{5,8})(?!\d)"
+    from_filter = source.get("from_filter")
+    timeout_ms = int(source.get("timeout_ms") or 180000)
+
+    if ctx is not None:
+        existing = ctx.get("_kuku")
+        if existing is not None:
+            try:
+                return await existing.wait_for_code(
+                    address,
+                    regex=regex,
+                    timeout=timeout_ms / 1000.0,
+                    from_filter=from_filter,
+                )
+            except Exception as exc:
+                logger.warning(f"  [otp] Kuku.wait_for_code failed: {exc!r}")
+
+        creds = ctx.get("_kuku_creds")
+        if creds is not None:
+            try:
+                from kuku_lu import Kuku
+                async with await Kuku.from_playwright(page, creds=creds) as k:
+                    return await k.wait_for_code(
+                        address,
+                        regex=regex,
+                        timeout=timeout_ms / 1000.0,
+                        from_filter=from_filter,
+                    )
+            except Exception as exc:
+                logger.warning(f"  [otp] Kuku.from_playwright failed: {exc!r}")
+
+    # Last-resort: replay the literally-recorded code so dry-runs / unit
+    # tests still produce a value. The actual code will be stale in a
+    # real OTP scenario but this keeps the pipeline functional.
+    rec = action.get("value")
+    if rec:
+        logger.warning(
+            "  [otp] no Kuku client in ctx — using recorded code as fallback. "
+            "Pass ctx['_kuku_creds']=KukuCreds(...) to fetch a fresh code."
+        )
+        return str(rec)
+    return None
+
+
 def _resolve_value(action: dict, ctx: Optional[Mapping[str, Any]]) -> Any:
     """Pick `value_template` (with interpolation) over `value` if present.
 
@@ -858,6 +931,13 @@ async def run_action(
         return await _do_combobox(page, resolved, action, str(_resolve_value(action, ctx)), logger=logger)
     if kind == "contenteditable":
         return await _do_contenteditable(page, resolved.locator, str(_resolve_value(action, ctx)), logger=logger)
+    if kind == "otp_paste":
+        code = await _fetch_otp_code(page, action, ctx, logger=logger)
+        if code is None:
+            logger.warning(f"  [SKIP] otp_paste {fid!r} — no code available")
+            return False
+        # Reuse _do_fill so the existing fill→type→paste self-heal applies.
+        return await _do_fill(page, resolved.locator, action, code, logger=logger)
 
     # Default: best-effort fill.
     return await _do_fill(page, resolved.locator, action, _resolve_value(action, ctx), logger=logger)

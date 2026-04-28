@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -60,31 +61,64 @@ OVERLAY_JS = r"""
   const ts = () => Date.now();
 
   // ---------------------- selector generation ----------------------
+  // Reject IDs/classes that look auto-generated (React/Relay/FB internal,
+  // long hex blobs, decimal-suffix numerics).  These rarely survive a page
+  // refresh, so picking them as a `stable_id` selector is a tarpit.
   const looksRandom = (s) => {
     if (!s) return true;
     if (s.length > 60) return true;
+    // Long hex blob, low alpha density (e.g. abc123def456...)
     if (/[0-9a-f]{8,}/i.test(s) && !/[a-z]{4,}/i.test(s)) return true;
+    // Generic prefix-hex (e.g. ember42, react-x9f8a1c)
     if (/^[a-z]+[-_][0-9a-f]{6,}/i.test(s)) return true;
+    // Facebook React internals: u_0_K3, u_0_12_D3, u_0_2_G/, ...
+    if (/^u_\d+(?:_|$)/i.test(s)) return true;
+    // Long all-digit ids and decimal-suffixed numeric ids (1112475925434379.0)
+    if (/^\d{6,}(?:\.\d+)?$/.test(s)) return true;
+    // Multiple underscore segments where the longest alpha run is < 4 chars
+    // (catches u_0_h_K8 type strings that the patterns above miss).
+    if ((s.match(/_/g) || []).length >= 2 && /^[A-Za-z0-9_/+\-]+$/.test(s)) {
+      const longestAlpha = (s.match(/[A-Za-z]+/g) || [])
+        .reduce((m, p) => Math.max(m, p.length), 0);
+      if (longestAlpha < 4) return true;
+    }
     return false;
   };
 
   const cssEscape = (s) =>
     (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&");
 
+  // Read the visible label text for an element.  When walking up to a wrapping
+  // <label>, strip nested form controls so we don't pollute the label with the
+  // current `value` of a sibling input — that's especially important when the
+  // form has multiple checkboxes inside the same fieldset and we need each
+  // checkbox to have a *different* accessible name.
+  const _labelInnerText = (lab) => {
+    if (!lab) return "";
+    try {
+      const clone = lab.cloneNode(true);
+      clone.querySelectorAll("input, textarea, select, script, style").forEach((n) => n.remove());
+      return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+    } catch (e) {
+      return (lab.innerText || lab.textContent || "").replace(/\s+/g, " ").trim();
+    }
+  };
+
   const labelTextFor = (el) => {
     if (!el) return "";
     if (el.id) {
       const lab = document.querySelector(`label[for="${cssEscape(el.id)}"]`);
-      if (lab) return (lab.innerText || lab.textContent || "").trim();
+      const t = _labelInnerText(lab);
+      if (t) return t;
     }
     let p = el.parentElement;
     while (p && p !== document.body) {
-      if (p.tagName === "LABEL") return (p.innerText || p.textContent || "").trim();
+      if (p.tagName === "LABEL") return _labelInnerText(p);
       p = p.parentElement;
     }
     if (el.getAttribute("aria-labelledby")) {
       const ref = document.getElementById(el.getAttribute("aria-labelledby"));
-      if (ref) return (ref.innerText || ref.textContent || "").trim();
+      if (ref) return (ref.innerText || ref.textContent || "").replace(/\s+/g, " ").trim();
     }
     return "";
   };
@@ -147,6 +181,15 @@ OVERLAY_JS = r"""
 
     if (el.name) {
       add("name", `[name="${cssEscape(el.name)}"]`, 90);
+      // For radio/checkbox the value attribute is what disambiguates siblings
+      // sharing a name (e.g. content_type[] with options Photo/Ad/Page/Other).
+      // Capture a name+value compound selector at higher weight than plain name.
+      const t = (el.getAttribute && (el.getAttribute("type") || "").toLowerCase()) || "";
+      if ((t === "radio" || t === "checkbox") && el.value != null && el.value !== "") {
+        add("name_value",
+            `[name="${cssEscape(el.name)}"][value="${cssEscape(el.value)}"]`,
+            92);
+      }
     }
 
     const role = el.getAttribute("role")
@@ -247,9 +290,16 @@ OVERLAY_JS = r"""
 
   const fingerprintOf = (el) => {
     const interesting = ["id","name","type","role","data-testid","aria-label",
-                         "placeholder","title","autocomplete"];
+                         "placeholder","title","autocomplete","value"];
     const attrs = {};
     for (const k of interesting) {
+      // For radios/checkboxes el.value is part of identity; for free-text
+      // inputs we deliberately skip it so the fingerprint does not depend on
+      // what the user happens to have typed at record time.
+      if (k === "value") {
+        const t = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+        if (t !== "radio" && t !== "checkbox") continue;
+      }
       const v = el.getAttribute(k);
       if (v != null) attrs[k] = v;
     }
@@ -270,6 +320,36 @@ OVERLAY_JS = r"""
   };
 
   // ---------------------- ship action to Python ----------------------
+  // Track the most recent click coordinates so any synchronously-shipped
+  // action that wants to record a click_position has access to them.
+  const _lastClick = { x: null, y: null, ts: 0 };
+  document.addEventListener("pointerdown", (ev) => {
+    if (typeof ev.clientX === "number") {
+      _lastClick.x = ev.clientX;
+      _lastClick.y = ev.clientY;
+      _lastClick.ts = ts();
+    }
+  }, true);
+  document.addEventListener("click", (ev) => {
+    if (typeof ev.clientX === "number") {
+      _lastClick.x = ev.clientX;
+      _lastClick.y = ev.clientY;
+      _lastClick.ts = ts();
+    }
+  }, true);
+
+  const _clickPositionWithin = (el) => {
+    if (!el || _lastClick.x == null) return null;
+    if (ts() - _lastClick.ts > 1500) return null;
+    let r;
+    try { r = el.getBoundingClientRect(); } catch (e) { return null; }
+    if (!r || r.width <= 0 || r.height <= 0) return null;
+    return {
+      x_pct: +((_lastClick.x - r.left) / r.width).toFixed(3),
+      y_pct: +((_lastClick.y - r.top) / r.height).toFixed(3),
+    };
+  };
+
   const ship = (kind, el, extra) => {
     try {
       const sels = buildSelectors(el);
@@ -284,6 +364,17 @@ OVERLAY_JS = r"""
         fingerprint: fingerprintOf(el),
         ...(extra || {}),
       };
+      // Attach a click_position when the action is a click-shaped one and we
+      // have a recent clientX/Y from the pointer/click stream.  The replay
+      // engine uses this as a tiebreaker when several siblings match the
+      // same selectors.
+      if (action.click_position == null) {
+        const navKinds = (kind === "click" || kind === "submit" || kind === "check");
+        if (navKinds) {
+          const pos = _clickPositionWithin(el);
+          if (pos) action.click_position = pos;
+        }
+      }
       if (window.__afRecord) window.__afRecord(JSON.stringify(action));
     } catch (e) { /* never break the host page */ }
   };
@@ -314,12 +405,24 @@ OVERLAY_JS = r"""
     }
     if (tag === "input" && t === "checkbox") {
       if (el.__af_proxy_handled) { delete el.__af_proxy_handled; return; }
-      ship("check", el, { checked: !!el.checked });
+      // Always carry the value attribute so siblings sharing a name can be
+      // distinguished at replay time (content_type[] = Photo / Ad / ...).
+      ship("check", el, {
+        checked: !!el.checked,
+        radio_value: el.value || undefined,
+        _hidden_input_name: el.name || undefined,
+        _hidden_input_type: "checkbox",
+      });
       return;
     }
     if (tag === "input" && t === "radio" && el.checked) {
       if (el.__af_proxy_handled) { delete el.__af_proxy_handled; return; }
-      ship("check", el, { checked: true, radio_value: el.value });
+      ship("check", el, {
+        checked: true,
+        radio_value: el.value,
+        _hidden_input_name: el.name || undefined,
+        _hidden_input_type: "radio",
+      });
       return;
     }
     if (tag === "input" && t === "file") {
@@ -356,25 +459,78 @@ OVERLAY_JS = r"""
     return false;
   };
 
-  const _findAssociatedInput = (clicked) => {
+  // When the user clicks a styled span/div proxy, walk up looking for the
+  // SPECIFIC hidden radio/checkbox the click belongs to.  We must NOT just
+  // grab the first input we find under a parent container — if the container
+  // wraps a fieldset of multiple checkboxes (Facebook's content_type[]), the
+  // first input is the wrong target ~75% of the time.
+  //
+  // Strategy:
+  //   1. closest <label> wrapping the click — that's the row label, return
+  //      its input.  This is the dominant case for well-structured forms.
+  //   2. label[for=ID] reference.
+  //   3. Walk up; among ALL inputs in the container, prefer one whose own
+  //      label or bounding box contains the click coordinates.
+  //   4. Fallback: closest input by Euclidean distance to the click point.
+  const _findAssociatedInput = (clicked, clickX, clickY) => {
     if (!clicked) return null;
-    // 1. Walk up to the nearest <label> and look for a radio/checkbox inside.
+
+    // 1. Nearest enclosing <label>: by definition this is THIS row's label.
     const label = clicked.closest("label");
     if (label) {
       const inp = label.querySelector('input[type="radio"], input[type="checkbox"]');
       if (inp) return inp;
-      // label[for=...] => referenced input
       const f = label.getAttribute("for");
       if (f) {
         const ref = document.getElementById(f);
         if (ref && ref.tagName === "INPUT") return ref;
       }
     }
-    // 2. If clicked is inside a container that has a radio/checkbox sibling.
+
+    // 2. Click coordinate hit-test against every nearby input's wrapping label.
+    //    This handles the case where the visual click target is OUTSIDE the
+    //    label (e.g. a container span) but inside the label's bounding box.
+    const haveCoords = (typeof clickX === "number" && typeof clickY === "number");
     let parent = clicked.parentElement;
-    for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) {
-      const inp = parent.querySelector('input[type="radio"], input[type="checkbox"]');
-      if (inp) return inp;
+    for (let depth = 0; parent && depth < 8; depth++, parent = parent.parentElement) {
+      const inputs = parent.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+      if (!inputs.length) continue;
+      if (inputs.length === 1) return inputs[0];
+
+      // Multiple inputs: pick by hit-test if we have click coords.
+      if (haveCoords) {
+        for (const inp of inputs) {
+          const ownLabel = inp.closest("label");
+          if (ownLabel) {
+            const r = ownLabel.getBoundingClientRect();
+            if (clickX >= r.left && clickX <= r.right &&
+                clickY >= r.top  && clickY <= r.bottom) {
+              return inp;
+            }
+          }
+        }
+      }
+      // Otherwise: closest input by Euclidean distance to the click point
+      //            (or the clicked element's own centre if no coords).
+      const cx = haveCoords ? clickX : ((() => {
+        const r = clicked.getBoundingClientRect();
+        return r ? r.left + r.width / 2 : 0;
+      })());
+      const cy = haveCoords ? clickY : ((() => {
+        const r = clicked.getBoundingClientRect();
+        return r ? r.top + r.height / 2 : 0;
+      })());
+      let best = null, bestDist = Infinity;
+      for (const inp of inputs) {
+        let r;
+        try { r = inp.getBoundingClientRect(); } catch (e) { continue; }
+        if (!r) continue;
+        const ix = r.left + r.width / 2;
+        const iy = r.top + r.height / 2;
+        const d = Math.hypot(ix - cx, iy - cy);
+        if (d < bestDist) { bestDist = d; best = inp; }
+      }
+      if (best) return best;
     }
     return null;
   };
@@ -383,6 +539,20 @@ OVERLAY_JS = r"""
   document.addEventListener("click", (ev) => {
     // Ignore clicks anywhere inside the recorder's own overlay panel.
     if (ev.target && ev.target.closest && ev.target.closest("#__af2_panel")) return;
+    // When the click target is a *real* radio/checkbox input, skip — the
+    // change handler will fire on this same interaction and ship the right
+    // action.  We must skip BOTH visible and hidden inputs here, because the
+    // browser synthesises a duplicate click on the wrapped input whenever the
+    // user clicks a label/span proxy (label-bound default action).  Without
+    // this guard, every proxy click ships twice and toggles the checkbox
+    // back to its starting state at replay time.
+    {
+      const tgt = ev.target;
+      if (tgt && tgt.tagName === "INPUT") {
+        const tt = (tgt.getAttribute("type") || "").toLowerCase();
+        if (tt === "checkbox" || tt === "radio") return;
+      }
+    }
     const path = ev.composedPath ? ev.composedPath() : [ev.target];
     let el = null;
     for (const n of path) {
@@ -402,7 +572,7 @@ OVERLAY_JS = r"""
     // the *clickable* visual proxy so the replay engine can click it.
     if (!el) {
       const clicked = ev.target;
-      const assocInput = _findAssociatedInput(clicked);
+      const assocInput = _findAssociatedInput(clicked, ev.clientX, ev.clientY);
       if (assocInput && _isHiddenInput(assocInput)) {
         const t = (assocInput.type || "").toLowerCase();
         const checked = t === "radio" ? true : !assocInput.checked;
@@ -410,9 +580,12 @@ OVERLAY_JS = r"""
         // selectors) rather than the proxy label (which often only has CSS
         // selectors with dynamic IDs).  The _click_proxy flag tells the
         // replay engine to click the parent label instead of force-clicking.
+        // Always include the input's `value` (radio_value) regardless of type
+        // — for checkboxes that share a `name` (content_type[]), the value is
+        // what disambiguates Photo / Ad / Page / Other at replay time.
         ship("check", assocInput, {
           checked,
-          radio_value: t === "radio" ? (assocInput.value || undefined) : undefined,
+          radio_value: assocInput.value || undefined,
           _hidden_input_name: assocInput.name || undefined,
           _hidden_input_type: t,
           _click_proxy: true,
@@ -483,6 +656,8 @@ OVERLAY_JS = r"""
       padding: 10px 12px; border-radius: 10px;
       box-shadow: 0 8px 28px rgba(0,0,0,0.4);
       width: 260px; user-select: none;
+      pointer-events: auto; isolation: isolate;
+      transform: translateZ(0); will-change: transform;
     `;
     wrap.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -493,6 +668,12 @@ OVERLAY_JS = r"""
       </div>
       <div id="__af2_last" style="font-size:11px;color:#bbb;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px;"></div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <button id="__af2_otp" style="flex:1;padding:6px 8px;background:#1f5d8b;color:#fff;
+          border:0;border-radius:6px;cursor:pointer;font-weight:600;"
+          title="Click an OTP input first, then press this button to fetch the latest code from kuku.lu and paste it.">✎ Get OTP → paste</button>
+      </div>
+      <div id="__af2_otp_status" style="font-size:11px;color:#aaa;margin-bottom:6px;min-height:14px;"></div>
       <div style="display:flex;gap:6px;">
         <button id="__af2_done" style="flex:1;padding:6px 8px;background:#1f8b3a;color:#fff;
           border:0;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>
@@ -507,6 +688,47 @@ OVERLAY_JS = r"""
     document.getElementById("__af2_done").addEventListener("click", () => window.__afFinish && window.__afFinish());
     document.getElementById("__af2_cancel").addEventListener("click", () => window.__afCancel && window.__afCancel());
     document.getElementById("__af2_undo").addEventListener("click", () => window.__afUndo && window.__afUndo());
+    // The OTP button captures the current focus FIRST (mousedown, before the
+    // browser shifts focus to the panel) so we know which input the user wants
+    // the code typed into.
+    const otpBtn = document.getElementById("__af2_otp");
+    if (otpBtn) {
+      otpBtn.addEventListener("mousedown", () => {
+        try { window.__af2_otp_target = document.activeElement || null; }
+        catch (e) { window.__af2_otp_target = null; }
+      }, true);
+      otpBtn.addEventListener("click", async () => {
+        const stat = document.getElementById("__af2_otp_status");
+        if (stat) stat.textContent = "… fetching code from kuku.lu";
+        try {
+          if (window.__afOtp) await window.__afOtp();
+          else if (stat) stat.textContent = "OTP integration not configured (recorder started without --kuku-creds)";
+        } catch (e) {
+          if (stat) stat.textContent = "OTP error: " + (e && e.message || e);
+        }
+      });
+    }
+  };
+  // Build an action stub describing the input the user just clicked into.
+  // Called from the Python side once the OTP code has been fetched.
+  window.__af_describeOtpTarget = () => {
+    const el = window.__af2_otp_target;
+    if (!el || el === document.body) return null;
+    try {
+      const sels = buildSelectors(el);
+      return {
+        field_id: fieldIdFor(el, sels),
+        field_type: (el.getAttribute && el.getAttribute("type")) || el.tagName.toLowerCase(),
+        selectors: sels,
+        fingerprint: fingerprintOf(el),
+        frame_chain: frameChain(),
+        url: location.href,
+      };
+    } catch (e) { return null; }
+  };
+  window.__af_setOtpStatus = (msg) => {
+    const el = document.getElementById("__af2_otp_status");
+    if (el) el.textContent = msg || "";
   };
   window.__af_updatePanel = (count, last) => {
     const c = document.getElementById("__af2_count");
@@ -549,6 +771,29 @@ class _Session:
             self.actions.pop()
 
 
+def _is_chrome_user_data_dir(p: Path) -> bool:
+    """True if ``p`` looks like a Chrome "User Data" directory.
+
+    Filesystems on Windows are case-insensitive but can preserve case in
+    different ways across Chrome versions/locales ("Local State" vs
+    "local state"). We tolerate both casings and also accept lowercase
+    on Linux/macOS.
+    """
+    try:
+        if not p.is_dir():
+            return False
+        # Fast path: the canonical capitalisation Chrome writes.
+        if (p / "Local State").exists():
+            return True
+        # Case-insensitive scan as a safety net.
+        for entry in p.iterdir():
+            if entry.name.lower() == "local state":
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _resolve_chrome_profile(profile_path: str) -> tuple[str, Optional[str]]:
     """Resolve a Chrome profile path into (user_data_dir, profile_directory).
 
@@ -566,17 +811,111 @@ def _resolve_chrome_profile(profile_path: str) -> tuple[str, Optional[str]]:
     it as-is and let Chromium pick the Default profile.
     """
     p = Path(profile_path)
-    # Marker: a Chrome User Data dir always contains "Local State".
-    if (p / "Local State").exists():
+    if _is_chrome_user_data_dir(p):
         return str(p), None
     # If the path contains "Preferences" and a parent has "Local State",
     # it is a sub-profile.
     if (p / "Preferences").exists():
         parent = p.parent
-        if (parent / "Local State").exists():
+        if _is_chrome_user_data_dir(parent):
             return str(parent), p.name
     # Fallback: use as-is (might be a standalone Playwright profile).
     return str(p), None
+
+
+def _check_chrome_profile_lock(user_data_dir: str) -> Optional[str]:
+    """Return a human-readable error string when a Chrome profile is in use.
+
+    Chrome (and Chromium) writes a ``SingletonLock`` symlink/file in the
+    ``User Data`` directory while a browser is attached. Launching
+    Playwright on the same path would either fail with an opaque
+    "ProcessSingleton" error or, worse, silently corrupt the profile.
+    On Windows the equivalent marker is ``lockfile`` plus the absence of
+    ``First Run`` write access.
+    """
+    try:
+        p = Path(user_data_dir)
+        for marker in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
+            if (p / marker).exists():
+                return (
+                    f"Chrome profile at {user_data_dir!s} is currently in use "
+                    f"(found {marker}). Close any running Chrome / Edge windows "
+                    f"that share this profile before starting the recorder."
+                )
+    except Exception:
+        return None
+    return None
+
+
+def _default_chrome_user_data_dir() -> Optional[str]:
+    """Best-effort default location of the user's main Chrome User Data dir.
+
+    Used as a hint in error messages and as the auto-fill suggestion in
+    the GUI's recorder dialog. Returns ``None`` when no plausible folder
+    exists.
+    """
+    candidates: list[Path] = []
+    home = Path.home()
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            candidates.append(Path(local) / "Google" / "Chrome" / "User Data")
+            candidates.append(Path(local) / "Microsoft" / "Edge" / "User Data")
+    elif sys.platform == "darwin":
+        candidates.append(home / "Library" / "Application Support" / "Google" / "Chrome")
+    else:
+        candidates.append(home / ".config" / "google-chrome")
+        candidates.append(home / ".config" / "chromium")
+    for c in candidates:
+        if _is_chrome_user_data_dir(c):
+            return str(c)
+    return None
+
+
+def _resolve_shots_dir(
+    out_path: Optional[str],
+    override: Optional[str],
+) -> Optional[Path]:
+    """Pick the directory we'll write per-step screenshots into.
+
+    Priority:
+      1. ``override`` if the caller passed one explicitly.
+      2. ``<out_stem>_shots`` next to the config (the historical default).
+      3. ``<tempdir>/auto_form_filler_<stem>_shots`` if (2) is unwritable
+         (e.g. the config lives in OneDrive on Windows and the parent has
+         a sync lock on writes).
+
+    Returns ``None`` when ``out_path`` is missing AND no override was
+    given — in that case the caller skips screenshots entirely.
+    """
+    if override:
+        try:
+            d = Path(override).expanduser()
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        except Exception:
+            pass
+    if not out_path:
+        return None
+    out = Path(out_path)
+    primary = out.parent / f"{out.stem}_shots"
+    try:
+        primary.mkdir(parents=True, exist_ok=True)
+        # Probe writability — OneDrive sometimes lets you mkdir but blocks
+        # the next file write.
+        probe = primary / ".__af2_write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return primary
+    except Exception:
+        pass
+    import tempfile
+    fallback = Path(tempfile.gettempdir()) / f"auto_form_filler_{out.stem}_shots"
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+    except Exception:
+        return None
 
 
 def build_config(
@@ -645,6 +984,9 @@ async def record_to_config(
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
     capture_screenshots: bool = True,
+    shots_dir_override: Optional[str] = None,
+    kuku_creds_path: Optional[str] = None,
+    kuku_otp_options: Optional[dict] = None,
 ) -> tuple[dict, list[dict]]:
     """Drive a browser, record the user's clicks/fills, return a v2 config.
 
@@ -654,6 +996,17 @@ async def record_to_config(
     relative path stored on the action under the ``screenshot`` key.
     Screenshot failures (page closed mid-click, frame detached, etc.)
     are silently swallowed — the recorded action is unaffected.
+
+    When ``kuku_creds_path`` points at a JSON file containing
+    ``{csrf_token, sessionhash, current_address?}`` (see
+    :py:class:`kuku_lu.KukuCreds`), the recorder enables the floating
+    "Get OTP → paste" button in the panel: clicking it fetches the
+    latest matching code from kuku.lu and types it into whichever input
+    the user just clicked into. The action is recorded as
+    ``kind="otp_paste"`` so replay can re-fetch the code per-account.
+    ``kuku_otp_options`` is a dict like
+    ``{"regex": ..., "from_filter": "facebook", "timeout_ms": 180000,
+       "address": "abc@kpay.be"}`` overriding the defaults.
     """
     fut: asyncio.Future[str] = asyncio.get_event_loop().create_future()
     session = _Session()
@@ -663,13 +1016,8 @@ async def record_to_config(
     # again per click. ``shots_dir`` stays None when screenshots are off
     # or no out_path was given (e.g. ad-hoc CLI smoke runs).
     shots_dir: Optional[Path] = None
-    if capture_screenshots and out_path:
-        try:
-            _out = Path(out_path)
-            shots_dir = _out.parent / f"{_out.stem}_shots"
-            shots_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            shots_dir = None
+    if capture_screenshots:
+        shots_dir = _resolve_shots_dir(out_path, shots_dir_override)
 
     # Smart-wait scratch state. Whenever the user fires a click/submit-ish
     # action, we mark ``_recently_acted_at`` and the framenavigated handler
@@ -683,6 +1031,13 @@ async def record_to_config(
         browser = None
         if chrome_profile:
             user_data_dir, profile_dir = _resolve_chrome_profile(chrome_profile)
+            lock_msg = _check_chrome_profile_lock(user_data_dir)
+            if lock_msg:
+                # Surface the message via stderr AND raise so the GUI can
+                # show it in a dialog instead of letting Playwright die
+                # 30 s later with an unhelpful ProcessSingleton error.
+                print(f"[recorder] {lock_msg}", file=sys.stderr)
+                raise RuntimeError(lock_msg)
             print(f"[recorder] user_data_dir: {user_data_dir}")
             if profile_dir:
                 print(f"[recorder] profile_directory: {profile_dir}")
@@ -809,6 +1164,153 @@ async def record_to_config(
                 except Exception:
                     pass
 
+        # ---- OTP integration (kuku.lu) ---------------------------------
+        # Loaded lazily so the recorder still imports cleanly even if the
+        # optional ``requests`` / ``beautifulsoup4`` deps are missing.
+        kuku_creds_obj = None
+        kuku_options = dict(kuku_otp_options or {})
+        if kuku_creds_path:
+            try:
+                from kuku_lu import KukuCreds
+                kuku_creds_obj = KukuCreds.from_dict(
+                    json.loads(Path(kuku_creds_path).read_text(encoding="utf-8"))
+                )
+            except Exception as exc:
+                print(
+                    f"[recorder] could not load kuku creds from {kuku_creds_path!r}: {exc!r}",
+                    file=sys.stderr,
+                )
+
+        async def on_otp() -> None:
+            """Fetch a code from kuku.lu, type it into the focused input,
+            and ship an ``otp_paste`` action describing the input."""
+            if kuku_creds_obj is None:
+                for pg in context.pages:
+                    try:
+                        await pg.evaluate(
+                            "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                            "no kuku creds — pass --kuku-creds <path>",
+                        )
+                    except Exception:
+                        pass
+                return
+            # Find the page whose panel button was clicked. The most
+            # recently active page is overwhelmingly the right one.
+            target_page = context.pages[-1] if context.pages else None
+            if target_page is None:
+                return
+            # Capture the focused element's selectors BEFORE we navigate or
+            # do anything that could shift focus.
+            try:
+                desc = await target_page.evaluate(
+                    "() => window.__af_describeOtpTarget && window.__af_describeOtpTarget()"
+                )
+            except Exception as exc:
+                desc = None
+                print(f"[recorder] otp: describe failed: {exc!r}", file=sys.stderr)
+            if not desc or not desc.get("selectors"):
+                try:
+                    await target_page.evaluate(
+                        "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                        "click on the OTP input first, then press the button",
+                    )
+                except Exception:
+                    pass
+                return
+
+            from kuku_lu import Kuku, KukuError
+            address = kuku_options.get("address") or kuku_creds_obj.current_address
+            regex = kuku_options.get("regex") or r"(?<!\d)(\d{5,8})(?!\d)"
+            from_filter = kuku_options.get("from_filter")
+            timeout_ms = int(kuku_options.get("timeout_ms") or 180000)
+
+            try:
+                # Use Playwright backend so we share the user's browser
+                # cookies + proxy + Cloudflare clearance.
+                async with await Kuku.from_playwright(
+                    target_page, creds=kuku_creds_obj,
+                ) as k:
+                    if not address:
+                        try:
+                            await target_page.evaluate(
+                                "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                                "minting kuku.lu address…",
+                            )
+                        except Exception:
+                            pass
+                        address = await k.create_address()
+                        kuku_creds_obj.current_address = address
+                    try:
+                        await target_page.evaluate(
+                            "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                            f"waiting for code at {address}…",
+                        )
+                    except Exception:
+                        pass
+                    code = await k.wait_for_code(
+                        address,
+                        regex=regex,
+                        timeout=timeout_ms / 1000.0,
+                        from_filter=from_filter,
+                    )
+            except KukuError as exc:
+                try:
+                    await target_page.evaluate(
+                        "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                        f"kuku.lu error: {exc}",
+                    )
+                except Exception:
+                    pass
+                return
+            except Exception as exc:
+                try:
+                    await target_page.evaluate(
+                        "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                        f"unexpected error: {exc!r}",
+                    )
+                except Exception:
+                    pass
+                return
+
+            # Type the code into the focused input — same as the user
+            # pressing the keys themselves.
+            try:
+                await target_page.keyboard.insert_text(code)
+            except Exception:
+                try:
+                    await target_page.keyboard.type(code, delay=30)
+                except Exception:
+                    pass
+
+            action = {
+                "kind": "otp_paste",
+                "ts": int(time.time() * 1000),
+                "value": code,  # last-known good for replay-debug fallback
+                "input_method": "type",
+                "source": {
+                    "kind": "kuku.lu",
+                    "address": address,
+                    "regex": regex,
+                    "from_filter": from_filter,
+                    "timeout_ms": timeout_ms,
+                },
+                **{k: v for k, v in desc.items() if k not in ("frame_chain",)},
+                "frame_chain": desc.get("frame_chain") or ["top"],
+            }
+            await _capture_screenshot(action, len(session.actions) + 1)
+            label = session.add(action)
+            try:
+                await target_page.evaluate(
+                    "(args) => window.__af_updatePanel && window.__af_updatePanel(args[0], args[1])",
+                    [len(session.actions), f"otp:{address} → {label}"],
+                )
+                await target_page.evaluate(
+                    "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                    f"got code {code} from {address}",
+                )
+            except Exception:
+                pass
+
         # expose_function may raise if already registered (persistent context
         # remembers bindings from previous sessions).  Wrap each call so we
         # don't abort the whole recording.
@@ -817,6 +1319,7 @@ async def record_to_config(
             ("__afFinish", on_finish),
             ("__afCancel", on_cancel),
             ("__afUndo", on_undo),
+            ("__afOtp", on_otp),
         ]:
             try:
                 await context.expose_function(fn_name, fn_ref)
@@ -912,6 +1415,9 @@ def record_to_config_sync(
     capture_screenshots: bool = True,
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
+    shots_dir_override: Optional[str] = None,
+    kuku_creds_path: Optional[str] = None,
+    kuku_otp_options: Optional[dict] = None,
 ) -> tuple[dict, list[dict]]:
     return asyncio.run(record_to_config(
         target_url,
@@ -922,6 +1428,9 @@ def record_to_config_sync(
         proxy=proxy,
         chrome_profile=chrome_profile,
         capture_screenshots=capture_screenshots,
+        shots_dir_override=shots_dir_override,
+        kuku_creds_path=kuku_creds_path,
+        kuku_otp_options=kuku_otp_options,
     ))
 
 
@@ -951,6 +1460,47 @@ def main() -> None:
         "--chrome-profile",
         help="Path to a Chrome user-data-dir to reuse cookies/proxy/extensions.",
     )
+    p.add_argument(
+        "--shots-dir",
+        help="Override directory for per-step screenshots. "
+             "Defaults to <out>_shots/ (with a tempdir fallback when the parent "
+             "is read-only, e.g. inside OneDrive on Windows).",
+    )
+    p.add_argument(
+        "--kuku-creds",
+        help="Path to a JSON file with kuku.lu credentials "
+             "({csrf_token, sessionhash, current_address?}). When set, the "
+             "recorder panel exposes a button that fetches the latest code "
+             "and pastes it into the focused input.",
+    )
+    p.add_argument(
+        "--kuku-from",
+        dest="kuku_from",
+        default=None,
+        help="Substring filter applied to mail bodies before code extraction "
+             "(e.g. 'facebook'). Matches case-insensitively.",
+    )
+    p.add_argument(
+        "--kuku-regex",
+        dest="kuku_regex",
+        default=None,
+        help=r"Regex with one capture group used to extract the code. "
+             r"Defaults to (?<!\d)(\d{5,8})(?!\d).",
+    )
+    p.add_argument(
+        "--kuku-timeout-ms",
+        dest="kuku_timeout_ms",
+        type=int,
+        default=180000,
+        help="How long to poll kuku.lu before giving up. Default 180000 (3 min).",
+    )
+    p.add_argument(
+        "--kuku-address",
+        dest="kuku_address",
+        default=None,
+        help="Force a specific kuku.lu alias (e.g. abc@kpay.be). Default: "
+             "reuse current_address from the creds file, or mint a fresh one.",
+    )
     _add_proxy_cli_args(p)
     args = p.parse_args()
 
@@ -964,6 +1514,14 @@ def main() -> None:
     )
 
     out_path = args.out or _default_out_path()
+    kuku_otp_options = {
+        "regex": getattr(args, "kuku_regex", None),
+        "from_filter": getattr(args, "kuku_from", None),
+        "timeout_ms": getattr(args, "kuku_timeout_ms", None),
+        "address": getattr(args, "kuku_address", None),
+    }
+    # Drop None entries so on_otp falls back to its own defaults.
+    kuku_otp_options = {k: v for k, v in kuku_otp_options.items() if v is not None}
     config, events = record_to_config_sync(
         args.url,
         wait_for_selector=args.wait_for,
@@ -973,6 +1531,9 @@ def main() -> None:
         capture_screenshots=not args.no_screenshots,
         proxy=proxy,
         chrome_profile=getattr(args, 'chrome_profile', None),
+        shots_dir_override=getattr(args, 'shots_dir', None),
+        kuku_creds_path=getattr(args, 'kuku_creds', None),
+        kuku_otp_options=kuku_otp_options or None,
     )
     print(f"[recorder_v2] {len(config.get('actions', []))} action(s), "
           f"{len(events)} event(s)")

@@ -60,31 +60,64 @@ OVERLAY_JS = r"""
   const ts = () => Date.now();
 
   // ---------------------- selector generation ----------------------
+  // Reject IDs/classes that look auto-generated (React/Relay/FB internal,
+  // long hex blobs, decimal-suffix numerics).  These rarely survive a page
+  // refresh, so picking them as a `stable_id` selector is a tarpit.
   const looksRandom = (s) => {
     if (!s) return true;
     if (s.length > 60) return true;
+    // Long hex blob, low alpha density (e.g. abc123def456...)
     if (/[0-9a-f]{8,}/i.test(s) && !/[a-z]{4,}/i.test(s)) return true;
+    // Generic prefix-hex (e.g. ember42, react-x9f8a1c)
     if (/^[a-z]+[-_][0-9a-f]{6,}/i.test(s)) return true;
+    // Facebook React internals: u_0_K3, u_0_12_D3, u_0_2_G/, ...
+    if (/^u_\d+(?:_|$)/i.test(s)) return true;
+    // Long all-digit ids and decimal-suffixed numeric ids (1112475925434379.0)
+    if (/^\d{6,}(?:\.\d+)?$/.test(s)) return true;
+    // Multiple underscore segments where the longest alpha run is < 4 chars
+    // (catches u_0_h_K8 type strings that the patterns above miss).
+    if ((s.match(/_/g) || []).length >= 2 && /^[A-Za-z0-9_/+\-]+$/.test(s)) {
+      const longestAlpha = (s.match(/[A-Za-z]+/g) || [])
+        .reduce((m, p) => Math.max(m, p.length), 0);
+      if (longestAlpha < 4) return true;
+    }
     return false;
   };
 
   const cssEscape = (s) =>
     (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&");
 
+  // Read the visible label text for an element.  When walking up to a wrapping
+  // <label>, strip nested form controls so we don't pollute the label with the
+  // current `value` of a sibling input — that's especially important when the
+  // form has multiple checkboxes inside the same fieldset and we need each
+  // checkbox to have a *different* accessible name.
+  const _labelInnerText = (lab) => {
+    if (!lab) return "";
+    try {
+      const clone = lab.cloneNode(true);
+      clone.querySelectorAll("input, textarea, select, script, style").forEach((n) => n.remove());
+      return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+    } catch (e) {
+      return (lab.innerText || lab.textContent || "").replace(/\s+/g, " ").trim();
+    }
+  };
+
   const labelTextFor = (el) => {
     if (!el) return "";
     if (el.id) {
       const lab = document.querySelector(`label[for="${cssEscape(el.id)}"]`);
-      if (lab) return (lab.innerText || lab.textContent || "").trim();
+      const t = _labelInnerText(lab);
+      if (t) return t;
     }
     let p = el.parentElement;
     while (p && p !== document.body) {
-      if (p.tagName === "LABEL") return (p.innerText || p.textContent || "").trim();
+      if (p.tagName === "LABEL") return _labelInnerText(p);
       p = p.parentElement;
     }
     if (el.getAttribute("aria-labelledby")) {
       const ref = document.getElementById(el.getAttribute("aria-labelledby"));
-      if (ref) return (ref.innerText || ref.textContent || "").trim();
+      if (ref) return (ref.innerText || ref.textContent || "").replace(/\s+/g, " ").trim();
     }
     return "";
   };
@@ -147,6 +180,15 @@ OVERLAY_JS = r"""
 
     if (el.name) {
       add("name", `[name="${cssEscape(el.name)}"]`, 90);
+      // For radio/checkbox the value attribute is what disambiguates siblings
+      // sharing a name (e.g. content_type[] with options Photo/Ad/Page/Other).
+      // Capture a name+value compound selector at higher weight than plain name.
+      const t = (el.getAttribute && (el.getAttribute("type") || "").toLowerCase()) || "";
+      if ((t === "radio" || t === "checkbox") && el.value != null && el.value !== "") {
+        add("name_value",
+            `[name="${cssEscape(el.name)}"][value="${cssEscape(el.value)}"]`,
+            92);
+      }
     }
 
     const role = el.getAttribute("role")
@@ -247,9 +289,16 @@ OVERLAY_JS = r"""
 
   const fingerprintOf = (el) => {
     const interesting = ["id","name","type","role","data-testid","aria-label",
-                         "placeholder","title","autocomplete"];
+                         "placeholder","title","autocomplete","value"];
     const attrs = {};
     for (const k of interesting) {
+      // For radios/checkboxes el.value is part of identity; for free-text
+      // inputs we deliberately skip it so the fingerprint does not depend on
+      // what the user happens to have typed at record time.
+      if (k === "value") {
+        const t = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+        if (t !== "radio" && t !== "checkbox") continue;
+      }
       const v = el.getAttribute(k);
       if (v != null) attrs[k] = v;
     }
@@ -270,6 +319,36 @@ OVERLAY_JS = r"""
   };
 
   // ---------------------- ship action to Python ----------------------
+  // Track the most recent click coordinates so any synchronously-shipped
+  // action that wants to record a click_position has access to them.
+  const _lastClick = { x: null, y: null, ts: 0 };
+  document.addEventListener("pointerdown", (ev) => {
+    if (typeof ev.clientX === "number") {
+      _lastClick.x = ev.clientX;
+      _lastClick.y = ev.clientY;
+      _lastClick.ts = ts();
+    }
+  }, true);
+  document.addEventListener("click", (ev) => {
+    if (typeof ev.clientX === "number") {
+      _lastClick.x = ev.clientX;
+      _lastClick.y = ev.clientY;
+      _lastClick.ts = ts();
+    }
+  }, true);
+
+  const _clickPositionWithin = (el) => {
+    if (!el || _lastClick.x == null) return null;
+    if (ts() - _lastClick.ts > 1500) return null;
+    let r;
+    try { r = el.getBoundingClientRect(); } catch (e) { return null; }
+    if (!r || r.width <= 0 || r.height <= 0) return null;
+    return {
+      x_pct: +((_lastClick.x - r.left) / r.width).toFixed(3),
+      y_pct: +((_lastClick.y - r.top) / r.height).toFixed(3),
+    };
+  };
+
   const ship = (kind, el, extra) => {
     try {
       const sels = buildSelectors(el);
@@ -284,6 +363,17 @@ OVERLAY_JS = r"""
         fingerprint: fingerprintOf(el),
         ...(extra || {}),
       };
+      // Attach a click_position when the action is a click-shaped one and we
+      // have a recent clientX/Y from the pointer/click stream.  The replay
+      // engine uses this as a tiebreaker when several siblings match the
+      // same selectors.
+      if (action.click_position == null) {
+        const navKinds = (kind === "click" || kind === "submit" || kind === "check");
+        if (navKinds) {
+          const pos = _clickPositionWithin(el);
+          if (pos) action.click_position = pos;
+        }
+      }
       if (window.__afRecord) window.__afRecord(JSON.stringify(action));
     } catch (e) { /* never break the host page */ }
   };
@@ -314,12 +404,24 @@ OVERLAY_JS = r"""
     }
     if (tag === "input" && t === "checkbox") {
       if (el.__af_proxy_handled) { delete el.__af_proxy_handled; return; }
-      ship("check", el, { checked: !!el.checked });
+      // Always carry the value attribute so siblings sharing a name can be
+      // distinguished at replay time (content_type[] = Photo / Ad / ...).
+      ship("check", el, {
+        checked: !!el.checked,
+        radio_value: el.value || undefined,
+        _hidden_input_name: el.name || undefined,
+        _hidden_input_type: "checkbox",
+      });
       return;
     }
     if (tag === "input" && t === "radio" && el.checked) {
       if (el.__af_proxy_handled) { delete el.__af_proxy_handled; return; }
-      ship("check", el, { checked: true, radio_value: el.value });
+      ship("check", el, {
+        checked: true,
+        radio_value: el.value,
+        _hidden_input_name: el.name || undefined,
+        _hidden_input_type: "radio",
+      });
       return;
     }
     if (tag === "input" && t === "file") {
@@ -356,25 +458,78 @@ OVERLAY_JS = r"""
     return false;
   };
 
-  const _findAssociatedInput = (clicked) => {
+  // When the user clicks a styled span/div proxy, walk up looking for the
+  // SPECIFIC hidden radio/checkbox the click belongs to.  We must NOT just
+  // grab the first input we find under a parent container — if the container
+  // wraps a fieldset of multiple checkboxes (Facebook's content_type[]), the
+  // first input is the wrong target ~75% of the time.
+  //
+  // Strategy:
+  //   1. closest <label> wrapping the click — that's the row label, return
+  //      its input.  This is the dominant case for well-structured forms.
+  //   2. label[for=ID] reference.
+  //   3. Walk up; among ALL inputs in the container, prefer one whose own
+  //      label or bounding box contains the click coordinates.
+  //   4. Fallback: closest input by Euclidean distance to the click point.
+  const _findAssociatedInput = (clicked, clickX, clickY) => {
     if (!clicked) return null;
-    // 1. Walk up to the nearest <label> and look for a radio/checkbox inside.
+
+    // 1. Nearest enclosing <label>: by definition this is THIS row's label.
     const label = clicked.closest("label");
     if (label) {
       const inp = label.querySelector('input[type="radio"], input[type="checkbox"]');
       if (inp) return inp;
-      // label[for=...] => referenced input
       const f = label.getAttribute("for");
       if (f) {
         const ref = document.getElementById(f);
         if (ref && ref.tagName === "INPUT") return ref;
       }
     }
-    // 2. If clicked is inside a container that has a radio/checkbox sibling.
+
+    // 2. Click coordinate hit-test against every nearby input's wrapping label.
+    //    This handles the case where the visual click target is OUTSIDE the
+    //    label (e.g. a container span) but inside the label's bounding box.
+    const haveCoords = (typeof clickX === "number" && typeof clickY === "number");
     let parent = clicked.parentElement;
-    for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) {
-      const inp = parent.querySelector('input[type="radio"], input[type="checkbox"]');
-      if (inp) return inp;
+    for (let depth = 0; parent && depth < 8; depth++, parent = parent.parentElement) {
+      const inputs = parent.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+      if (!inputs.length) continue;
+      if (inputs.length === 1) return inputs[0];
+
+      // Multiple inputs: pick by hit-test if we have click coords.
+      if (haveCoords) {
+        for (const inp of inputs) {
+          const ownLabel = inp.closest("label");
+          if (ownLabel) {
+            const r = ownLabel.getBoundingClientRect();
+            if (clickX >= r.left && clickX <= r.right &&
+                clickY >= r.top  && clickY <= r.bottom) {
+              return inp;
+            }
+          }
+        }
+      }
+      // Otherwise: closest input by Euclidean distance to the click point
+      //            (or the clicked element's own centre if no coords).
+      const cx = haveCoords ? clickX : ((() => {
+        const r = clicked.getBoundingClientRect();
+        return r ? r.left + r.width / 2 : 0;
+      })());
+      const cy = haveCoords ? clickY : ((() => {
+        const r = clicked.getBoundingClientRect();
+        return r ? r.top + r.height / 2 : 0;
+      })());
+      let best = null, bestDist = Infinity;
+      for (const inp of inputs) {
+        let r;
+        try { r = inp.getBoundingClientRect(); } catch (e) { continue; }
+        if (!r) continue;
+        const ix = r.left + r.width / 2;
+        const iy = r.top + r.height / 2;
+        const d = Math.hypot(ix - cx, iy - cy);
+        if (d < bestDist) { bestDist = d; best = inp; }
+      }
+      if (best) return best;
     }
     return null;
   };
@@ -383,6 +538,20 @@ OVERLAY_JS = r"""
   document.addEventListener("click", (ev) => {
     // Ignore clicks anywhere inside the recorder's own overlay panel.
     if (ev.target && ev.target.closest && ev.target.closest("#__af2_panel")) return;
+    // When the click target is a *real* radio/checkbox input, skip — the
+    // change handler will fire on this same interaction and ship the right
+    // action.  We must skip BOTH visible and hidden inputs here, because the
+    // browser synthesises a duplicate click on the wrapped input whenever the
+    // user clicks a label/span proxy (label-bound default action).  Without
+    // this guard, every proxy click ships twice and toggles the checkbox
+    // back to its starting state at replay time.
+    {
+      const tgt = ev.target;
+      if (tgt && tgt.tagName === "INPUT") {
+        const tt = (tgt.getAttribute("type") || "").toLowerCase();
+        if (tt === "checkbox" || tt === "radio") return;
+      }
+    }
     const path = ev.composedPath ? ev.composedPath() : [ev.target];
     let el = null;
     for (const n of path) {
@@ -402,7 +571,7 @@ OVERLAY_JS = r"""
     // the *clickable* visual proxy so the replay engine can click it.
     if (!el) {
       const clicked = ev.target;
-      const assocInput = _findAssociatedInput(clicked);
+      const assocInput = _findAssociatedInput(clicked, ev.clientX, ev.clientY);
       if (assocInput && _isHiddenInput(assocInput)) {
         const t = (assocInput.type || "").toLowerCase();
         const checked = t === "radio" ? true : !assocInput.checked;
@@ -410,9 +579,12 @@ OVERLAY_JS = r"""
         // selectors) rather than the proxy label (which often only has CSS
         // selectors with dynamic IDs).  The _click_proxy flag tells the
         // replay engine to click the parent label instead of force-clicking.
+        // Always include the input's `value` (radio_value) regardless of type
+        // — for checkboxes that share a `name` (content_type[]), the value is
+        // what disambiguates Photo / Ad / Page / Other at replay time.
         ship("check", assocInput, {
           checked,
-          radio_value: t === "radio" ? (assocInput.value || undefined) : undefined,
+          radio_value: assocInput.value || undefined,
           _hidden_input_name: assocInput.name || undefined,
           _hidden_input_type: t,
           _click_proxy: true,

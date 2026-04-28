@@ -1143,6 +1143,14 @@ class AutoFillGUI(tk.Tk):
         self.wait_var.set(self.config_data.get("wait_for_selector", "") or "")
         self.headless_var.set(bool(self.config_data.get("headless", False)))
         self.dry_run_var.set(bool(self.config_data.get("dry_run", True)))
+        # Auto-enable "submit after fill" when the loaded config carries a
+        # captured submit block.  Users can still untick it before running.
+        # Honour an explicit ``submit_after_fill`` flag in the config when present.
+        if "submit_after_fill" in self.config_data:
+            self.submit_var.set(bool(self.config_data.get("submit_after_fill")))
+        else:
+            submit_block = self.config_data.get("submit")
+            self.submit_var.set(bool(submit_block))
         proxy = self.config_data.get("proxy")
         if isinstance(proxy, dict):
             self.proxy_server_var.set(proxy.get("server", ""))
@@ -1276,6 +1284,7 @@ class AutoFillGUI(tk.Tk):
         self.config_data["wait_for_selector"] = self.wait_var.get()
         self.config_data["headless"] = bool(self.headless_var.get())
         self.config_data["dry_run"] = bool(self.dry_run_var.get())
+        self.config_data["submit_after_fill"] = bool(self.submit_var.get())
 
         # Proxy: store as a dict if any field is set, otherwise drop the key.
         server = self.proxy_server_var.get().strip()

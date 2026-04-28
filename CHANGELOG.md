@@ -1,5 +1,64 @@
 # Changelog
 
+## Recorder accuracy: multi-checkbox groups & dynamic IDs
+
+The recorder used to mis-identify the *target* of a click whenever a form
+had several radios/checkboxes sharing a single `name` attribute (e.g.
+Facebook's trademark report form, where four `content_type[]` checkboxes
+sit inside one fieldset). The first input under the click's container was
+always picked, so all four "Content You Want to Report" actions ended up
+pointing at the *same* checkbox at replay time.
+
+The fix touches the recorder, the resolver, the fingerprint, and the GUI:
+
+- `recorder_v2.OVERLAY_JS`
+  - `_findAssociatedInput()` now picks the right hidden input even when
+    several share a parent: it prefers the input whose own wrapping label's
+    bounding box contains the click point, then falls back to the closest
+    input by Euclidean distance to the click coordinates.
+  - The proxy-click branch always carries the `value` attribute now (not
+    just for radios), so checkboxes that share a `name` (e.g.
+    `content_type[]`) are disambiguated at replay time.
+  - The change handler also carries `_hidden_input_name` /
+    `_hidden_input_type` / `radio_value` so the replay engine's
+    JS-direct-set fallback can target the right sibling.
+  - New compound selector `name_value` →
+    `[name="..."][value="..."]` (weight 92) emitted for every
+    radio/checkbox with both attributes — the strongest natural identity
+    short of an `id`.
+  - Click coordinates are tracked from `pointerdown` and `click`; a new
+    `click_position` field (% within the target's bounding box) is shipped
+    on every `click` / `submit` / `check` action as a future-proof
+    tiebreaker.
+  - `looksRandom()` now rejects Facebook React internals (`u_0_K3`,
+    `u_0_12_D3`, `u_0_h_K8`, `u_0_2_G/`), long all-digit ids and
+    decimal-suffixed numerics (`1112475925434379.0`), so the recorder no
+    longer commits FB's volatile dynamic ids as `stable_id` selectors.
+  - `labelTextFor()` now strips nested form controls before reading
+    `innerText`, so each checkbox in a fieldset gets its own distinct
+    accessible name (previously all four read out the same combined
+    label).
+  - The click handler short-circuits when its target is a *real* input
+    (`<input type=checkbox|radio>`) — labels emit a synthetic click on
+    the underlying input which used to make the proxy branch fire twice.
+
+- `element_fingerprint.FINGERPRINT_JS`: the captured attributes set now
+  includes `value` for radios/checkboxes only, so the resolver's
+  attribute-match score correctly differentiates siblings.
+
+- `resolver_v2._STRATEGY_WEIGHT`: `name_value` is registered at weight
+  92, slotting it just below `data_testid` / `id` and above the bare
+  `name` strategy.
+
+- `auto_fill_gui`: the "submit after fill" checkbox auto-enables when
+  the loaded config carries a captured `submit` block. The state is
+  persisted to the JSON as `submit_after_fill` so re-loading restores
+  the user's preference.
+
+A regression test (`test_recorder_checkbox_group.py`) reproduces the
+Facebook-style 4-checkbox group end-to-end and asserts that all four
+options are checked after replay.
+
 ## Multi-proxy parallel runs (Proxy pool)
 
 The pool runner can now drive **N parallel browser contexts, one proxy per

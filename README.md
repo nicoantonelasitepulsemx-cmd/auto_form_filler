@@ -326,14 +326,66 @@ proxy actually works before clicking Run.
 ### Proxy list format
 
 `proxies.txt` is a plain newline-separated list. Blank lines and `#`
-comments are skipped:
+comments are skipped. Each line can use **any** of these shapes (mix
+freely in the same file):
 
 ```
-# free pool
-http://user1:pass1@1.2.3.4:8080
-http://user2:pass2@5.6.7.8:8080
+# host:port:user:pass — most common in commercial proxy lists
+1.2.3.4:8080:alice:apass
+
+# host:port — anonymous proxy (no auth)
+9.10.11.12:3128
+
+# user:pass@host:port
+bob:bpass@5.6.7.8:9090
+
+# explicit scheme + URL form
+http://user:pass@1.2.3.4:8080
 socks5://9.10.11.12:1080
 ```
+
+A ready-to-edit template is provided as `proxies.example.txt`.
+
+## Multi-proxy parallel runs
+
+If you have a pool of proxies and want to run the **same** config across
+all of them at the same time (one BrowserContext per proxy), use the
+**Proxy pool** feature.
+
+### CLI
+
+```bash
+# Run config.json with one parallel page per proxy
+python auto_fill.py --config config.json --proxy-pool proxies.txt
+
+# Cap concurrency to 5 even if proxies.txt has more lines
+python auto_fill.py --config config.json --proxy-pool proxies.txt --workers 5
+
+# Headless + dry-run is great for smoke-testing the pool itself
+python auto_fill.py --config config.json --proxy-pool proxies.txt --headless --dry-run
+
+# Each worker gets its own persistent Chromium profile
+python auto_fill.py --config config.json --proxy-pool proxies.txt --proxy-pool-persistent
+```
+
+The pool prints `task_start` / `task_done` events for every proxy; final
+line is `[PROXY-POOL] done — N/M task(s) succeeded`.
+
+### GUI
+
+The GUI has a dedicated **Proxy pool** row (just below **Multi-account**):
+
+* **proxies file** — pick a `.txt` / `.list` file in the format above.
+* **Validate** — parse the file and show how many proxies are valid +
+  the first few (passwords masked) without running anything.
+* **parallel** — max concurrent browser contexts (defaults to the number
+  of proxies in the file).
+* **separate profiles** — when checked, each worker uses its own
+  persistent profile under `~/.auto_form_filler_profiles/proxy_<i>` so
+  cookies / storage stay isolated across runs. Leave unchecked for
+  ephemeral one-shot runs.
+* **▶ Run multi-proxy** — fan the current config out across all proxies.
+  Per-proxy events stream into the log.
 
 ### SOCKS authentication caveat
 

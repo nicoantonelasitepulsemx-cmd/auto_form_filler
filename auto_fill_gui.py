@@ -33,7 +33,12 @@ from typing import Any, Optional
 
 import auto_fill
 from logger import get_logger
-from proxy_utils import build_playwright_proxy, mask_proxy, parse_proxy_string
+from proxy_utils import (
+    build_playwright_proxy,
+    load_proxy_dicts,
+    mask_proxy,
+    parse_proxy_string,
+)
 
 # --------------------------------------------------------------------------------------
 #  Field-type / strategy dictionaries shown in dropdowns
@@ -152,12 +157,31 @@ RECENT_FILES_FILE = Path.home() / ".auto_form_filler_recent"
 RECENT_FILES_MAX = 8
 
 
+# Window sizing constants -- the launcher computes a target geometry from the
+# active screen so the GUI looks right on a 13" laptop and a 4K monitor alike.
+_TARGET_W_FRACTION = 0.80   # 80% of screen width
+_TARGET_H_FRACTION = 0.85   # 85% of screen height
+_MAX_W = 1600               # cap so we don't sprawl on 4K
+_MAX_H = 1100
+_MIN_W = 900
+_MIN_H = 600
+_FADE_IN_STEPS = 12         # alpha 0 -> 1 in this many frames
+_FADE_IN_INTERVAL_MS = 18   # ~16 ms = ~60 fps; 18 ms is comfortable on Tk
+
+
 class AutoFillGUI(tk.Tk):
     def __init__(self, initial_config_path: Optional[str] = None) -> None:
         super().__init__()
-        self.title("auto_form_filler")
-        self.geometry("1180x780")
-        self.minsize(900, 600)
+        # Hide the window briefly so the user doesn't see the resize jump
+        # before fade-in kicks off.
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+
+        self.title("AUTOMAtion")
+        self._apply_screen_geometry()
+        self.minsize(_MIN_W, _MIN_H)
 
         self.config_path: Optional[Path] = None
         self.config_data: dict[str, Any] = copy.deepcopy(EMPTY_CONFIG)
@@ -193,6 +217,8 @@ class AutoFillGUI(tk.Tk):
         self._update_title()
 
         self.after(100, self._drain_log_queue)
+        # Fade in once the layout has settled.
+        self.after(40, self._fade_in)
 
     # ------------------------------------------------------------------ theme
 
@@ -231,7 +257,10 @@ class AutoFillGUI(tk.Tk):
             data = {}
 
         geom = data.get("geometry")
-        if isinstance(geom, str) and "x" in geom:
+        # Only honour the saved geometry if it still fits on the current
+        # screen — avoids the window opening half off-screen when the user
+        # plugs in a smaller display since last launch.
+        if isinstance(geom, str) and "x" in geom and self._geometry_fits_screen(geom):
             try:
                 self.geometry(geom)
                 self.update_idletasks()
@@ -266,6 +295,17 @@ class AutoFillGUI(tk.Tk):
             self._right_paned.sashpos(0, int(right) if right else int(right_h * 0.40))
         except Exception:
             pass
+
+    def _geometry_fits_screen(self, geom: str) -> bool:
+        """Return True if a saved ``WxH+X+Y`` string still fits the screen."""
+        try:
+            size, *rest = geom.split("+")
+            w, h = (int(v) for v in size.split("x"))
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            return w <= sw and h <= sh
+        except Exception:
+            return False
 
     def _save_layout(self) -> None:
         try:
@@ -314,9 +354,52 @@ class AutoFillGUI(tk.Tk):
         name = self.config_path.name if self.config_path else "(unsaved)"
         marker = "•" if self._dirty else ""
         try:
-            self.title(f"auto_form_filler — {marker}{name}")
+            self.title(f"AUTOMAtion — {marker}{name}")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ window sizing & fade-in
+
+    def _apply_screen_geometry(self) -> None:
+        """Pick a window size that fits the user's screen and centre it.
+
+        Uses ``winfo_screenwidth/height`` (the active monitor under the
+        cursor on most desktops) and falls back to a sane default if those
+        calls error out (e.g. headless / weird WM).
+        """
+        try:
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+        except Exception:
+            sw, sh = 1366, 768
+        w = min(int(sw * _TARGET_W_FRACTION), _MAX_W)
+        h = min(int(sh * _TARGET_H_FRACTION), _MAX_H)
+        w = max(w, _MIN_W)
+        h = max(h, _MIN_H)
+        x = max((sw - w) // 2, 0)
+        y = max((sh - h) // 2, 0)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _fade_in(self, step: int = 0) -> None:
+        """Animate window alpha from 0 → 1 with smooth easing.
+
+        Tk's ``-alpha`` attribute is only honoured by some window managers
+        (it's a no-op on a few X11 setups). We try anyway; if it raises we
+        just snap to fully visible.
+        """
+        try:
+            t = (step + 1) / _FADE_IN_STEPS
+            # Ease-out cubic for a natural feel.
+            alpha = 1.0 - (1.0 - t) ** 3
+            self.attributes("-alpha", min(1.0, max(0.0, alpha)))
+        except tk.TclError:
+            try:
+                self.attributes("-alpha", 1.0)
+            except tk.TclError:
+                pass
+            return
+        if step + 1 < _FADE_IN_STEPS:
+            self.after(_FADE_IN_INTERVAL_MS, self._fade_in, step + 1)
 
     # ------------------------------------------------------------------ recent files
 
@@ -737,20 +820,32 @@ class AutoFillGUI(tk.Tk):
         ttk.Button(proxy_row, text="Test", width=6, command=self.cmd_test_proxy).grid(
             row=0, column=6, sticky="w", padx=(4, 0)
         )
+        # Row 1 — bypass (chỉ riêng dòng này, để dễ nhìn)
         ttk.Label(proxy_row, text="bypass:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.proxy_bypass_var = tk.StringVar()
-        ttk.Entry(proxy_row, textvariable=self.proxy_bypass_var, width=36).grid(
-            row=1, column=1, sticky="we", pady=(4, 0), padx=(4, 8)
+        ttk.Entry(proxy_row, textvariable=self.proxy_bypass_var, width=60).grid(
+            row=1, column=1, columnspan=6, sticky="we", pady=(4, 0), padx=(4, 8)
         )
-        ttk.Label(proxy_row, text="list file:").grid(row=1, column=2, sticky="w", pady=(4, 0))
+        ttk.Label(
+            proxy_row,
+            text="hosts đi thẳng (không qua proxy), cách nhau bằng dấu phẩy — vd: *.local, 127.0.0.1",
+            foreground="#777",
+        ).grid(row=2, column=1, columnspan=7, sticky="w", padx=(4, 0))
+
+        # Row 3 — Import .txt (proxy rotation trong 1 tab) — dòng riêng theo yêu cầu
+        ttk.Label(
+            proxy_row, text="import .txt:",
+        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
         self.proxy_list_var = tk.StringVar()
-        ttk.Entry(proxy_row, textvariable=self.proxy_list_var, width=24).grid(
-            row=1, column=3, columnspan=2, sticky="we", pady=(4, 0), padx=(4, 4)
+        ttk.Entry(proxy_row, textvariable=self.proxy_list_var, width=44).grid(
+            row=3, column=1, columnspan=3, sticky="we", pady=(8, 0), padx=(4, 4)
         )
-        ttk.Button(proxy_row, text="…", width=3, command=self.cmd_pick_proxy_list).grid(
-            row=1, column=5, sticky="w", pady=(4, 0)
+        ttk.Button(
+            proxy_row, text="…", width=3, command=self.cmd_pick_proxy_list,
+        ).grid(row=3, column=4, sticky="w", pady=(8, 0))
+        ttk.Label(proxy_row, text="rotate:").grid(
+            row=3, column=5, sticky="w", pady=(8, 0), padx=(8, 0),
         )
-        ttk.Label(proxy_row, text="rotate:").grid(row=1, column=6, sticky="w", pady=(4, 0), padx=(8, 0))
         self.proxy_rotate_var = tk.StringVar(value="round_robin")
         ttk.Combobox(
             proxy_row,
@@ -758,7 +853,18 @@ class AutoFillGUI(tk.Tk):
             values=["round_robin", "random", "none"],
             width=12,
             state="readonly",
-        ).grid(row=1, column=7, sticky="w", pady=(4, 0), padx=(4, 0))
+        ).grid(row=3, column=6, sticky="w", pady=(8, 0), padx=(4, 0))
+        ttk.Label(
+            proxy_row,
+            text=(
+                "import file proxy .txt (host:port:user:pass / 1 dòng / một proxy) "
+                "→ rotate trong CÙNG 1 tab. "
+                "Muốn chạy nhiều tab song song: dùng hàng \"Proxy pool\" phía dưới."
+            ),
+            foreground="#777",
+            wraplength=720,
+            justify="left",
+        ).grid(row=4, column=1, columnspan=7, sticky="w", padx=(4, 0), pady=(2, 0))
         proxy_row.columnconfigure(1, weight=1)
 
         # Chrome profile row
@@ -914,6 +1020,47 @@ class AutoFillGUI(tk.Tk):
         self.run_pool_btn = ttk.Button(ma_row, text="▶ Run pool", command=self.cmd_run_pool)
         self.run_pool_btn.grid(row=0, column=5, sticky="w", padx=(8, 0))
         ma_row.columnconfigure(1, weight=1)
+
+        # ---------- Proxy pool row (multi-proxy parallel run) ----------
+        pp_row = ttk.LabelFrame(
+            self,
+            text="Proxy pool — run N pages in parallel, one proxy per page",
+            padding=6,
+        )
+        pp_row.pack(fill="x", padx=8, pady=(2, 0), before=outer_paned)
+        ttk.Label(pp_row, text="proxies file:").grid(row=0, column=0, sticky="w")
+        self.proxy_pool_path_var = tk.StringVar()
+        ttk.Entry(pp_row, textvariable=self.proxy_pool_path_var, width=40).grid(
+            row=0, column=1, sticky="we", padx=(4, 4)
+        )
+        ttk.Button(pp_row, text="…", width=3, command=self.cmd_pick_proxy_pool).grid(
+            row=0, column=2, sticky="w"
+        )
+        ttk.Button(pp_row, text="Validate", width=9, command=self.cmd_validate_proxy_pool).grid(
+            row=0, column=3, sticky="w", padx=(4, 0)
+        )
+        ttk.Label(pp_row, text="parallel:").grid(row=0, column=4, sticky="w", padx=(8, 0))
+        self.proxy_pool_workers_var = tk.StringVar(value="")
+        ttk.Entry(pp_row, textvariable=self.proxy_pool_workers_var, width=4).grid(
+            row=0, column=5, sticky="w", padx=(4, 0)
+        )
+        self.proxy_pool_persistent_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            pp_row, text="separate profiles", variable=self.proxy_pool_persistent_var,
+        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
+        self.run_proxy_pool_btn = ttk.Button(
+            pp_row, text="▶ Run multi-proxy", command=self.cmd_run_proxy_pool,
+        )
+        self.run_proxy_pool_btn.grid(row=0, column=7, sticky="w", padx=(8, 0))
+        ttk.Label(
+            pp_row,
+            text=(
+                "Format per line: host:port:user:pass  (also accepts "
+                "http://user:pass@host:port, host:port, etc.)"
+            ),
+            foreground="#777",
+        ).grid(row=1, column=0, columnspan=8, sticky="w", pady=(4, 0))
+        pp_row.columnconfigure(1, weight=1)
 
         # ---------- Bottom: run controls (above the log so they stay visible) ----------
         bot = ttk.Frame(self, padding=(8, 4))
@@ -1825,6 +1972,8 @@ class AutoFillGUI(tk.Tk):
 
     def _on_run_finished(self) -> None:
         self.run_btn.configure(state="normal")
+        if hasattr(self, "run_proxy_pool_btn"):
+            self.run_proxy_pool_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.status_var.set("Ready.")
 
@@ -1922,8 +2071,169 @@ class AutoFillGUI(tk.Tk):
     def _on_pool_finished(self) -> None:
         self.run_btn.configure(state="normal")
         self.run_pool_btn.configure(state="normal")
+        self.run_proxy_pool_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.status_var.set("Ready.")
+
+    # ------------------------------------------------------------------ multi-proxy run
+
+    def cmd_pick_proxy_pool(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select proxies file (host:port:user:pass per line)",
+            filetypes=[
+                ("Text / proxy list", "*.txt *.list *.proxies *.csv"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path:
+            self.proxy_pool_path_var.set(path)
+
+    def cmd_validate_proxy_pool(self) -> None:
+        """Parse the selected proxy file and report how many proxies are valid."""
+        path = self.proxy_pool_path_var.get().strip()
+        if not path:
+            messagebox.showinfo("Proxy pool", "Pick a proxies file first.")
+            return
+        if not Path(path).exists():
+            messagebox.showwarning("Proxy pool", f"File not found:\n{path}")
+            return
+        try:
+            proxies = load_proxy_dicts(path, on_error="silent")
+        except Exception as exc:
+            messagebox.showerror("Proxy pool", f"Failed to parse:\n{exc}")
+            return
+        if not proxies:
+            messagebox.showwarning(
+                "Proxy pool",
+                "No valid proxies parsed. Each line must be like\n"
+                "host:port:user:pass  (or http://user:pass@host:port).",
+            )
+            return
+        sample = "\n".join(f"  {i + 1}. {mask_proxy(p)}" for i, p in enumerate(proxies[:8]))
+        more = "" if len(proxies) <= 8 else f"\n  … {len(proxies) - 8} more"
+        self._log_local(f"[PROXY-POOL] {len(proxies)} proxy/ies parsed from {path}")
+        messagebox.showinfo(
+            "Proxy pool",
+            f"Parsed {len(proxies)} proxy/ies:\n\n{sample}{more}",
+        )
+
+    def cmd_run_proxy_pool(self) -> None:
+        """Run the current config in parallel — one BrowserContext per proxy."""
+        if self.runner_thread and self.runner_thread.is_alive():
+            return
+        path = self.proxy_pool_path_var.get().strip()
+        if not path or not Path(path).exists():
+            messagebox.showwarning("Proxy pool", "Pick a valid proxies file first.")
+            return
+
+        self._commit_field_value()
+        self._commit_top_level()
+        if not self.config_data.get("target_url"):
+            messagebox.showwarning("Missing URL", "Please set a target_url before running.")
+            return
+
+        try:
+            workers = int(self.proxy_pool_workers_var.get().strip() or 0)
+        except ValueError:
+            workers = 0
+
+        config_snapshot = copy.deepcopy(self.config_data)
+        # Don't double-apply the single-proxy fields when running the pool —
+        # each worker uses its own proxy from the file.
+        config_snapshot.pop("proxy", None)
+        config_snapshot.pop("proxy_list", None)
+        config_snapshot.pop("proxy_rotate", None)
+
+        engine_logger = get_logger(debug=bool(self.debug_var.get()))
+        for h in list(engine_logger.handlers):
+            if isinstance(h, QueueLogHandler):
+                engine_logger.removeHandler(h)
+        engine_logger.addHandler(QueueLogHandler(self.log_queue))
+
+        headless = bool(self.headless_var.get())
+        dry_run = bool(self.dry_run_var.get())
+        debug = bool(self.debug_var.get())
+        persistent = bool(self.proxy_pool_persistent_var.get())
+
+        self.run_btn.configure(state="disabled")
+        self.run_pool_btn.configure(state="disabled")
+        self.run_proxy_pool_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self.status_var.set("Running multi-proxy…")
+        self._log_local(
+            f"[PROXY-POOL] starting with proxies={path} parallel={workers or 'auto'} "
+            f"profiles={'separate' if persistent else 'ephemeral'}"
+        )
+
+        def worker() -> None:
+            try:
+                from accounts import accounts_from_proxies
+                from worker_pool import Task, WorkerPool
+
+                proxies = load_proxy_dicts(path, on_error="warn")
+                if not proxies:
+                    self.log_queue.put_nowait(
+                        "[PROXY-POOL] no valid proxies — aborting"
+                    )
+                    return
+                self.log_queue.put_nowait(
+                    f"[PROXY-POOL] loaded {len(proxies)} proxy/ies"
+                )
+
+                udd_template = None
+                if persistent:
+                    base = Path.home() / ".auto_form_filler_profiles"
+                    base.mkdir(parents=True, exist_ok=True)
+                    udd_template = str(base / "{name}")
+
+                accts = accounts_from_proxies(
+                    proxies,
+                    headless=headless,
+                    user_data_dir_template=udd_template,
+                )
+                tasks = [
+                    Task(config=config_snapshot, vars=dict(a.vars), label=a.name)
+                    for a in accts
+                ]
+                self.log_queue.put_nowait(
+                    f"[PROXY-POOL] {len(tasks)} task(s) queued, "
+                    f"max concurrency={workers or len(accts)}"
+                )
+
+                def report(evt: str, payload: dict) -> None:
+                    bits = [f"[{evt}]"]
+                    for k in ("account", "label", "ok", "filled", "skipped",
+                              "attempts", "duration_s", "error", "proxy"):
+                        if k in payload and payload[k] is not None:
+                            bits.append(f"{k}={payload[k]!r}")
+                    self.log_queue.put_nowait(" ".join(bits))
+
+                pool = WorkerPool(
+                    accts,
+                    max_concurrency=workers or len(accts),
+                    report_cb=report,
+                    dry_run=dry_run,
+                    debug=debug,
+                )
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                self.runner_loop = loop
+                self.runner_task = loop.create_task(pool.run_tasks(tasks))
+                results = loop.run_until_complete(self.runner_task)
+                ok = sum(1 for r in results if r.ok)
+                self.log_queue.put_nowait(
+                    f"[PROXY-POOL] done — {ok}/{len(results)} task(s) succeeded"
+                )
+            except Exception as exc:
+                self.log_queue.put_nowait(f"[PROXY-POOL_ERR] {exc!r}")
+            finally:
+                self.runner_loop = None
+                self.runner_task = None
+                self.after(0, self._on_pool_finished)
+
+        self.runner_thread = threading.Thread(target=worker, daemon=True)
+        self.runner_thread.start()
 
     # ------------------------------------------------------------------ log queue draining
 

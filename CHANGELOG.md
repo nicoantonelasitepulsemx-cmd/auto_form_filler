@@ -1,5 +1,44 @@
 # Changelog
 
+## Multi-proxy parallel runs (Proxy pool)
+
+The pool runner can now drive **N parallel browser contexts, one proxy per
+context**, straight from a flat proxy list. No more hand-crafting an
+`accounts.json` just to test multiple proxies.
+
+### Proxy file parser
+- `proxy_utils.parse_proxy_string` now accepts the **flat colon format**
+  used by most commercial proxy providers in addition to the existing URL
+  forms:
+  - `host:port:user:pass`  ← most common
+  - `host:port`            ← anonymous
+  - `user:pass@host:port`  ← creds-before-host
+  - everything from before still works (`http://user:pass@host:port`,
+    `socks5://...`, etc.)
+  - passwords containing `:` are preserved (only the first 3 colons are
+    treated as field separators).
+- New `proxy_utils.load_proxy_dicts(path)` returns a list of
+  Playwright-shaped proxy dicts in one call. Bad lines are skipped with
+  a warning by default (configurable: `on_error="raise" | "silent"`).
+- `proxies.example.txt` ships as a copy-paste template.
+
+### Multi-proxy runner
+- New `accounts.accounts_from_proxies(proxies, ...)` synthesises one
+  `Account` per proxy so the existing `WorkerPool` can fan out N parallel
+  pages with no `accounts.json` needed. Optional
+  `user_data_dir_template` gives every worker its own persistent profile.
+- New CLI flag `auto_fill.py --proxy-pool proxies.txt` runs the current
+  config across every proxy in parallel. `--workers N` caps concurrency,
+  `--proxy-pool-persistent` enables per-proxy profiles.
+- New GUI section **Proxy pool** (right below Multi-account):
+  - File picker + **Validate** button (parses without running, shows the
+    first 8 proxies with passwords masked).
+  - **parallel** workers entry, **separate profiles** toggle.
+  - **▶ Run multi-proxy** button — streams per-proxy `task_start` /
+    `task_done` events into the same log used by single-proxy runs.
+
+See README → "Multi-proxy parallel runs" for full usage.
+
 ## Quality-of-life pass: dirty-state, shortcuts, filter, status icons, recent files, validate, value templates, test selectors
 
 A coordinated polish round across the GUI and engine to make the tool feel

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -655,6 +656,8 @@ OVERLAY_JS = r"""
       padding: 10px 12px; border-radius: 10px;
       box-shadow: 0 8px 28px rgba(0,0,0,0.4);
       width: 260px; user-select: none;
+      pointer-events: auto; isolation: isolate;
+      transform: translateZ(0); will-change: transform;
     `;
     wrap.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -721,6 +724,29 @@ class _Session:
             self.actions.pop()
 
 
+def _is_chrome_user_data_dir(p: Path) -> bool:
+    """True if ``p`` looks like a Chrome "User Data" directory.
+
+    Filesystems on Windows are case-insensitive but can preserve case in
+    different ways across Chrome versions/locales ("Local State" vs
+    "local state"). We tolerate both casings and also accept lowercase
+    on Linux/macOS.
+    """
+    try:
+        if not p.is_dir():
+            return False
+        # Fast path: the canonical capitalisation Chrome writes.
+        if (p / "Local State").exists():
+            return True
+        # Case-insensitive scan as a safety net.
+        for entry in p.iterdir():
+            if entry.name.lower() == "local state":
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _resolve_chrome_profile(profile_path: str) -> tuple[str, Optional[str]]:
     """Resolve a Chrome profile path into (user_data_dir, profile_directory).
 
@@ -738,17 +764,111 @@ def _resolve_chrome_profile(profile_path: str) -> tuple[str, Optional[str]]:
     it as-is and let Chromium pick the Default profile.
     """
     p = Path(profile_path)
-    # Marker: a Chrome User Data dir always contains "Local State".
-    if (p / "Local State").exists():
+    if _is_chrome_user_data_dir(p):
         return str(p), None
     # If the path contains "Preferences" and a parent has "Local State",
     # it is a sub-profile.
     if (p / "Preferences").exists():
         parent = p.parent
-        if (parent / "Local State").exists():
+        if _is_chrome_user_data_dir(parent):
             return str(parent), p.name
     # Fallback: use as-is (might be a standalone Playwright profile).
     return str(p), None
+
+
+def _check_chrome_profile_lock(user_data_dir: str) -> Optional[str]:
+    """Return a human-readable error string when a Chrome profile is in use.
+
+    Chrome (and Chromium) writes a ``SingletonLock`` symlink/file in the
+    ``User Data`` directory while a browser is attached. Launching
+    Playwright on the same path would either fail with an opaque
+    "ProcessSingleton" error or, worse, silently corrupt the profile.
+    On Windows the equivalent marker is ``lockfile`` plus the absence of
+    ``First Run`` write access.
+    """
+    try:
+        p = Path(user_data_dir)
+        for marker in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
+            if (p / marker).exists():
+                return (
+                    f"Chrome profile at {user_data_dir!s} is currently in use "
+                    f"(found {marker}). Close any running Chrome / Edge windows "
+                    f"that share this profile before starting the recorder."
+                )
+    except Exception:
+        return None
+    return None
+
+
+def _default_chrome_user_data_dir() -> Optional[str]:
+    """Best-effort default location of the user's main Chrome User Data dir.
+
+    Used as a hint in error messages and as the auto-fill suggestion in
+    the GUI's recorder dialog. Returns ``None`` when no plausible folder
+    exists.
+    """
+    candidates: list[Path] = []
+    home = Path.home()
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            candidates.append(Path(local) / "Google" / "Chrome" / "User Data")
+            candidates.append(Path(local) / "Microsoft" / "Edge" / "User Data")
+    elif sys.platform == "darwin":
+        candidates.append(home / "Library" / "Application Support" / "Google" / "Chrome")
+    else:
+        candidates.append(home / ".config" / "google-chrome")
+        candidates.append(home / ".config" / "chromium")
+    for c in candidates:
+        if _is_chrome_user_data_dir(c):
+            return str(c)
+    return None
+
+
+def _resolve_shots_dir(
+    out_path: Optional[str],
+    override: Optional[str],
+) -> Optional[Path]:
+    """Pick the directory we'll write per-step screenshots into.
+
+    Priority:
+      1. ``override`` if the caller passed one explicitly.
+      2. ``<out_stem>_shots`` next to the config (the historical default).
+      3. ``<tempdir>/auto_form_filler_<stem>_shots`` if (2) is unwritable
+         (e.g. the config lives in OneDrive on Windows and the parent has
+         a sync lock on writes).
+
+    Returns ``None`` when ``out_path`` is missing AND no override was
+    given — in that case the caller skips screenshots entirely.
+    """
+    if override:
+        try:
+            d = Path(override).expanduser()
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        except Exception:
+            pass
+    if not out_path:
+        return None
+    out = Path(out_path)
+    primary = out.parent / f"{out.stem}_shots"
+    try:
+        primary.mkdir(parents=True, exist_ok=True)
+        # Probe writability — OneDrive sometimes lets you mkdir but blocks
+        # the next file write.
+        probe = primary / ".__af2_write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return primary
+    except Exception:
+        pass
+    import tempfile
+    fallback = Path(tempfile.gettempdir()) / f"auto_form_filler_{out.stem}_shots"
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+    except Exception:
+        return None
 
 
 def build_config(
@@ -817,6 +937,7 @@ async def record_to_config(
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
     capture_screenshots: bool = True,
+    shots_dir_override: Optional[str] = None,
 ) -> tuple[dict, list[dict]]:
     """Drive a browser, record the user's clicks/fills, return a v2 config.
 
@@ -835,13 +956,8 @@ async def record_to_config(
     # again per click. ``shots_dir`` stays None when screenshots are off
     # or no out_path was given (e.g. ad-hoc CLI smoke runs).
     shots_dir: Optional[Path] = None
-    if capture_screenshots and out_path:
-        try:
-            _out = Path(out_path)
-            shots_dir = _out.parent / f"{_out.stem}_shots"
-            shots_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            shots_dir = None
+    if capture_screenshots:
+        shots_dir = _resolve_shots_dir(out_path, shots_dir_override)
 
     # Smart-wait scratch state. Whenever the user fires a click/submit-ish
     # action, we mark ``_recently_acted_at`` and the framenavigated handler
@@ -855,6 +971,13 @@ async def record_to_config(
         browser = None
         if chrome_profile:
             user_data_dir, profile_dir = _resolve_chrome_profile(chrome_profile)
+            lock_msg = _check_chrome_profile_lock(user_data_dir)
+            if lock_msg:
+                # Surface the message via stderr AND raise so the GUI can
+                # show it in a dialog instead of letting Playwright die
+                # 30 s later with an unhelpful ProcessSingleton error.
+                print(f"[recorder] {lock_msg}", file=sys.stderr)
+                raise RuntimeError(lock_msg)
             print(f"[recorder] user_data_dir: {user_data_dir}")
             if profile_dir:
                 print(f"[recorder] profile_directory: {profile_dir}")
@@ -1084,6 +1207,7 @@ def record_to_config_sync(
     capture_screenshots: bool = True,
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
+    shots_dir_override: Optional[str] = None,
 ) -> tuple[dict, list[dict]]:
     return asyncio.run(record_to_config(
         target_url,
@@ -1094,6 +1218,7 @@ def record_to_config_sync(
         proxy=proxy,
         chrome_profile=chrome_profile,
         capture_screenshots=capture_screenshots,
+        shots_dir_override=shots_dir_override,
     ))
 
 
@@ -1123,6 +1248,12 @@ def main() -> None:
         "--chrome-profile",
         help="Path to a Chrome user-data-dir to reuse cookies/proxy/extensions.",
     )
+    p.add_argument(
+        "--shots-dir",
+        help="Override directory for per-step screenshots. "
+             "Defaults to <out>_shots/ (with a tempdir fallback when the parent "
+             "is read-only, e.g. inside OneDrive on Windows).",
+    )
     _add_proxy_cli_args(p)
     args = p.parse_args()
 
@@ -1145,6 +1276,7 @@ def main() -> None:
         capture_screenshots=not args.no_screenshots,
         proxy=proxy,
         chrome_profile=getattr(args, 'chrome_profile', None),
+        shots_dir_override=getattr(args, 'shots_dir', None),
     )
     print(f"[recorder_v2] {len(config.get('actions', []))} action(s), "
           f"{len(events)} event(s)")

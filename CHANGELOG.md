@@ -1,5 +1,38 @@
 # Changelog
 
+## Windows 11 polish
+
+A pass over the recorder + GUI to make the tool feel native on Windows
+11. None of these are bug fixes per se — the tool already ran on
+Windows — but they remove the most common rough edges users hit:
+
+- `auto_fill_gui` now opts into per-monitor DPI awareness on Windows
+  (`SetProcessDpiAwareness(2)`) before the first `tk.Tk()` so text is
+  crisp on 1.5x / 2.0x displays instead of bitmap-stretched.
+- All preference reads/writes (`THEME_PREF_FILE`, `LAYOUT_PREF_FILE`,
+  `RECENT_FILES_FILE`) explicitly use `encoding="utf-8"` so the GUI no
+  longer depends on the user's `cp1252` codepage.
+- `recorder_v2._is_chrome_user_data_dir` accepts both casings of
+  `Local State` (Chrome occasionally writes mixed case across versions)
+  so passing `C:\Users\...\google\chrome\user data` is fine even when
+  Windows preserves it lowercased.
+- `recorder_v2._check_chrome_profile_lock` detects an in-use Chrome
+  profile (`SingletonLock` / `SingletonCookie` / `SingletonSocket` /
+  `lockfile`) BEFORE Playwright tries to launch and raises a clear
+  message — no more 30 second hang ending in `ProcessSingleton`.
+- New `recorder_v2._default_chrome_user_data_dir` returns the most
+  likely User Data path for the current OS, so the GUI's recorder
+  dialog can pre-fill the field on Windows
+  (`%LOCALAPPDATA%\Google\Chrome\User Data`).
+- New `--shots-dir` CLI flag (and `shots_dir_override=` kwarg) lets the
+  user redirect per-step screenshots out of the config's parent. The
+  default path now also probes for write access and falls back to the
+  system temp dir when the parent is read-only — typical for configs
+  living inside a OneDrive sync folder on Windows.
+- The recorder's floating panel adds `pointer-events: auto`,
+  `isolation: isolate` and `transform: translateZ(0)` to its CSS so
+  iframes / parent transforms can't hide it on Edge in Windows.
+
 ## Recorder accuracy: multi-checkbox groups & dynamic IDs
 
 The recorder used to mis-identify the *target* of a click whenever a form

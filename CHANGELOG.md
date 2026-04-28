@@ -1,5 +1,50 @@
 # Changelog
 
+## Disposable mail per proxy + automatic OTP paste (kuku.lu)
+
+A new module + matching recorder/replay paths so each proxy/account
+gets its own throw-away mailbox and OTP codes are pulled in
+automatically without copy/paste.
+
+- New `kuku_lu.py` module:
+  - `KukuCreds` — persistable identity (`csrf_token` + `sessionhash`).
+  - `Kuku` client with two backends: `from_playwright(page)` (preferred,
+    inherits the browser's Cloudflare clearance) and `from_requests()`
+    (lightweight HTTP, falls through cleanly when challenged).
+  - `create_address(domain=None)` — mint a disposable alias.
+  - `wait_for_code(address, regex, timeout, from_filter)` — poll the
+    inbox until a matching code arrives, then return the captured
+    group.
+- `accounts.py` learns about `Account.kuku: KukuCreds | None` so each
+  proxy worker can use its own inbox during parallel replay.
+- New `kuku_lu_cli.py` for shell-side provisioning:
+  ```
+  python kuku_lu_cli.py mint --out kuku_acct1.json
+  python kuku_lu_cli.py wait-code --creds kuku_acct1.json --from facebook
+  ```
+- `recorder_v2.py` gains a blue **"✎ Get OTP → paste"** button on the
+  floating panel when started with `--kuku-creds <path>`. Click any OTP
+  input, press the panel button, the recorder fetches the latest code
+  from kuku.lu and types it into the field — and saves the action as
+  `kind="otp_paste"` so replay does the same per-account on every run.
+  CLI flags: `--kuku-creds`, `--kuku-from`, `--kuku-regex`,
+  `--kuku-timeout-ms`, `--kuku-address`.
+- `replay_engine.py` handles `kind="otp_paste"`: looks up
+  `ctx["_kuku"]` (a pre-built client) or `ctx["_kuku_creds"]` (a
+  `KukuCreds` to build one against the current page), resolves the
+  field, polls kuku.lu, then routes through the existing
+  `_do_fill` self-heal so the typed code survives React-controlled
+  inputs.
+- Tests:
+  - `test_kuku_lu.py` spins up an `aiohttp` server emulating kuku.lu's
+    four endpoints and exercises `create_address`, `list_mails`,
+    `read_mail`, `wait_for_code`, plus the `KukuCreds` round-trip and
+    the resume-from-creds path.
+  - `test_otp_paste_replay.py` exercises the replay engine end-to-end
+    against the same fake server with a real Playwright page,
+    verifying the code lands in the input AND the recorded-value
+    fallback when no Kuku is supplied.
+
 ## Windows 11 polish
 
 A pass over the recorder + GUI to make the tool feel native on Windows

@@ -668,6 +668,12 @@ OVERLAY_JS = r"""
       </div>
       <div id="__af2_last" style="font-size:11px;color:#bbb;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px;"></div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <button id="__af2_otp" style="flex:1;padding:6px 8px;background:#1f5d8b;color:#fff;
+          border:0;border-radius:6px;cursor:pointer;font-weight:600;"
+          title="Click an OTP input first, then press this button to fetch the latest code from kuku.lu and paste it.">✎ Get OTP → paste</button>
+      </div>
+      <div id="__af2_otp_status" style="font-size:11px;color:#aaa;margin-bottom:6px;min-height:14px;"></div>
       <div style="display:flex;gap:6px;">
         <button id="__af2_done" style="flex:1;padding:6px 8px;background:#1f8b3a;color:#fff;
           border:0;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>
@@ -682,6 +688,47 @@ OVERLAY_JS = r"""
     document.getElementById("__af2_done").addEventListener("click", () => window.__afFinish && window.__afFinish());
     document.getElementById("__af2_cancel").addEventListener("click", () => window.__afCancel && window.__afCancel());
     document.getElementById("__af2_undo").addEventListener("click", () => window.__afUndo && window.__afUndo());
+    // The OTP button captures the current focus FIRST (mousedown, before the
+    // browser shifts focus to the panel) so we know which input the user wants
+    // the code typed into.
+    const otpBtn = document.getElementById("__af2_otp");
+    if (otpBtn) {
+      otpBtn.addEventListener("mousedown", () => {
+        try { window.__af2_otp_target = document.activeElement || null; }
+        catch (e) { window.__af2_otp_target = null; }
+      }, true);
+      otpBtn.addEventListener("click", async () => {
+        const stat = document.getElementById("__af2_otp_status");
+        if (stat) stat.textContent = "… fetching code from kuku.lu";
+        try {
+          if (window.__afOtp) await window.__afOtp();
+          else if (stat) stat.textContent = "OTP integration not configured (recorder started without --kuku-creds)";
+        } catch (e) {
+          if (stat) stat.textContent = "OTP error: " + (e && e.message || e);
+        }
+      });
+    }
+  };
+  // Build an action stub describing the input the user just clicked into.
+  // Called from the Python side once the OTP code has been fetched.
+  window.__af_describeOtpTarget = () => {
+    const el = window.__af2_otp_target;
+    if (!el || el === document.body) return null;
+    try {
+      const sels = buildSelectors(el);
+      return {
+        field_id: fieldIdFor(el, sels),
+        field_type: (el.getAttribute && el.getAttribute("type")) || el.tagName.toLowerCase(),
+        selectors: sels,
+        fingerprint: fingerprintOf(el),
+        frame_chain: frameChain(),
+        url: location.href,
+      };
+    } catch (e) { return null; }
+  };
+  window.__af_setOtpStatus = (msg) => {
+    const el = document.getElementById("__af2_otp_status");
+    if (el) el.textContent = msg || "";
   };
   window.__af_updatePanel = (count, last) => {
     const c = document.getElementById("__af2_count");
@@ -938,6 +985,8 @@ async def record_to_config(
     chrome_profile: Optional[str] = None,
     capture_screenshots: bool = True,
     shots_dir_override: Optional[str] = None,
+    kuku_creds_path: Optional[str] = None,
+    kuku_otp_options: Optional[dict] = None,
 ) -> tuple[dict, list[dict]]:
     """Drive a browser, record the user's clicks/fills, return a v2 config.
 
@@ -947,6 +996,17 @@ async def record_to_config(
     relative path stored on the action under the ``screenshot`` key.
     Screenshot failures (page closed mid-click, frame detached, etc.)
     are silently swallowed — the recorded action is unaffected.
+
+    When ``kuku_creds_path`` points at a JSON file containing
+    ``{csrf_token, sessionhash, current_address?}`` (see
+    :py:class:`kuku_lu.KukuCreds`), the recorder enables the floating
+    "Get OTP → paste" button in the panel: clicking it fetches the
+    latest matching code from kuku.lu and types it into whichever input
+    the user just clicked into. The action is recorded as
+    ``kind="otp_paste"`` so replay can re-fetch the code per-account.
+    ``kuku_otp_options`` is a dict like
+    ``{"regex": ..., "from_filter": "facebook", "timeout_ms": 180000,
+       "address": "abc@kpay.be"}`` overriding the defaults.
     """
     fut: asyncio.Future[str] = asyncio.get_event_loop().create_future()
     session = _Session()
@@ -1104,6 +1164,153 @@ async def record_to_config(
                 except Exception:
                     pass
 
+        # ---- OTP integration (kuku.lu) ---------------------------------
+        # Loaded lazily so the recorder still imports cleanly even if the
+        # optional ``requests`` / ``beautifulsoup4`` deps are missing.
+        kuku_creds_obj = None
+        kuku_options = dict(kuku_otp_options or {})
+        if kuku_creds_path:
+            try:
+                from kuku_lu import KukuCreds
+                kuku_creds_obj = KukuCreds.from_dict(
+                    json.loads(Path(kuku_creds_path).read_text(encoding="utf-8"))
+                )
+            except Exception as exc:
+                print(
+                    f"[recorder] could not load kuku creds from {kuku_creds_path!r}: {exc!r}",
+                    file=sys.stderr,
+                )
+
+        async def on_otp() -> None:
+            """Fetch a code from kuku.lu, type it into the focused input,
+            and ship an ``otp_paste`` action describing the input."""
+            if kuku_creds_obj is None:
+                for pg in context.pages:
+                    try:
+                        await pg.evaluate(
+                            "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                            "no kuku creds — pass --kuku-creds <path>",
+                        )
+                    except Exception:
+                        pass
+                return
+            # Find the page whose panel button was clicked. The most
+            # recently active page is overwhelmingly the right one.
+            target_page = context.pages[-1] if context.pages else None
+            if target_page is None:
+                return
+            # Capture the focused element's selectors BEFORE we navigate or
+            # do anything that could shift focus.
+            try:
+                desc = await target_page.evaluate(
+                    "() => window.__af_describeOtpTarget && window.__af_describeOtpTarget()"
+                )
+            except Exception as exc:
+                desc = None
+                print(f"[recorder] otp: describe failed: {exc!r}", file=sys.stderr)
+            if not desc or not desc.get("selectors"):
+                try:
+                    await target_page.evaluate(
+                        "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                        "click on the OTP input first, then press the button",
+                    )
+                except Exception:
+                    pass
+                return
+
+            from kuku_lu import Kuku, KukuError
+            address = kuku_options.get("address") or kuku_creds_obj.current_address
+            regex = kuku_options.get("regex") or r"(?<!\d)(\d{5,8})(?!\d)"
+            from_filter = kuku_options.get("from_filter")
+            timeout_ms = int(kuku_options.get("timeout_ms") or 180000)
+
+            try:
+                # Use Playwright backend so we share the user's browser
+                # cookies + proxy + Cloudflare clearance.
+                async with await Kuku.from_playwright(
+                    target_page, creds=kuku_creds_obj,
+                ) as k:
+                    if not address:
+                        try:
+                            await target_page.evaluate(
+                                "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                                "minting kuku.lu address…",
+                            )
+                        except Exception:
+                            pass
+                        address = await k.create_address()
+                        kuku_creds_obj.current_address = address
+                    try:
+                        await target_page.evaluate(
+                            "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                            f"waiting for code at {address}…",
+                        )
+                    except Exception:
+                        pass
+                    code = await k.wait_for_code(
+                        address,
+                        regex=regex,
+                        timeout=timeout_ms / 1000.0,
+                        from_filter=from_filter,
+                    )
+            except KukuError as exc:
+                try:
+                    await target_page.evaluate(
+                        "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                        f"kuku.lu error: {exc}",
+                    )
+                except Exception:
+                    pass
+                return
+            except Exception as exc:
+                try:
+                    await target_page.evaluate(
+                        "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                        f"unexpected error: {exc!r}",
+                    )
+                except Exception:
+                    pass
+                return
+
+            # Type the code into the focused input — same as the user
+            # pressing the keys themselves.
+            try:
+                await target_page.keyboard.insert_text(code)
+            except Exception:
+                try:
+                    await target_page.keyboard.type(code, delay=30)
+                except Exception:
+                    pass
+
+            action = {
+                "kind": "otp_paste",
+                "ts": int(time.time() * 1000),
+                "value": code,  # last-known good for replay-debug fallback
+                "input_method": "type",
+                "source": {
+                    "kind": "kuku.lu",
+                    "address": address,
+                    "regex": regex,
+                    "from_filter": from_filter,
+                    "timeout_ms": timeout_ms,
+                },
+                **{k: v for k, v in desc.items() if k not in ("frame_chain",)},
+                "frame_chain": desc.get("frame_chain") or ["top"],
+            }
+            await _capture_screenshot(action, len(session.actions) + 1)
+            label = session.add(action)
+            try:
+                await target_page.evaluate(
+                    "(args) => window.__af_updatePanel && window.__af_updatePanel(args[0], args[1])",
+                    [len(session.actions), f"otp:{address} → {label}"],
+                )
+                await target_page.evaluate(
+                    "(m) => window.__af_setOtpStatus && window.__af_setOtpStatus(m)",
+                    f"got code {code} from {address}",
+                )
+            except Exception:
+                pass
+
         # expose_function may raise if already registered (persistent context
         # remembers bindings from previous sessions).  Wrap each call so we
         # don't abort the whole recording.
@@ -1112,6 +1319,7 @@ async def record_to_config(
             ("__afFinish", on_finish),
             ("__afCancel", on_cancel),
             ("__afUndo", on_undo),
+            ("__afOtp", on_otp),
         ]:
             try:
                 await context.expose_function(fn_name, fn_ref)
@@ -1208,6 +1416,8 @@ def record_to_config_sync(
     proxy: Optional[Any] = None,
     chrome_profile: Optional[str] = None,
     shots_dir_override: Optional[str] = None,
+    kuku_creds_path: Optional[str] = None,
+    kuku_otp_options: Optional[dict] = None,
 ) -> tuple[dict, list[dict]]:
     return asyncio.run(record_to_config(
         target_url,
@@ -1219,6 +1429,8 @@ def record_to_config_sync(
         chrome_profile=chrome_profile,
         capture_screenshots=capture_screenshots,
         shots_dir_override=shots_dir_override,
+        kuku_creds_path=kuku_creds_path,
+        kuku_otp_options=kuku_otp_options,
     ))
 
 
@@ -1254,6 +1466,41 @@ def main() -> None:
              "Defaults to <out>_shots/ (with a tempdir fallback when the parent "
              "is read-only, e.g. inside OneDrive on Windows).",
     )
+    p.add_argument(
+        "--kuku-creds",
+        help="Path to a JSON file with kuku.lu credentials "
+             "({csrf_token, sessionhash, current_address?}). When set, the "
+             "recorder panel exposes a button that fetches the latest code "
+             "and pastes it into the focused input.",
+    )
+    p.add_argument(
+        "--kuku-from",
+        dest="kuku_from",
+        default=None,
+        help="Substring filter applied to mail bodies before code extraction "
+             "(e.g. 'facebook'). Matches case-insensitively.",
+    )
+    p.add_argument(
+        "--kuku-regex",
+        dest="kuku_regex",
+        default=None,
+        help=r"Regex with one capture group used to extract the code. "
+             r"Defaults to (?<!\d)(\d{5,8})(?!\d).",
+    )
+    p.add_argument(
+        "--kuku-timeout-ms",
+        dest="kuku_timeout_ms",
+        type=int,
+        default=180000,
+        help="How long to poll kuku.lu before giving up. Default 180000 (3 min).",
+    )
+    p.add_argument(
+        "--kuku-address",
+        dest="kuku_address",
+        default=None,
+        help="Force a specific kuku.lu alias (e.g. abc@kpay.be). Default: "
+             "reuse current_address from the creds file, or mint a fresh one.",
+    )
     _add_proxy_cli_args(p)
     args = p.parse_args()
 
@@ -1267,6 +1514,14 @@ def main() -> None:
     )
 
     out_path = args.out or _default_out_path()
+    kuku_otp_options = {
+        "regex": getattr(args, "kuku_regex", None),
+        "from_filter": getattr(args, "kuku_from", None),
+        "timeout_ms": getattr(args, "kuku_timeout_ms", None),
+        "address": getattr(args, "kuku_address", None),
+    }
+    # Drop None entries so on_otp falls back to its own defaults.
+    kuku_otp_options = {k: v for k, v in kuku_otp_options.items() if v is not None}
     config, events = record_to_config_sync(
         args.url,
         wait_for_selector=args.wait_for,
@@ -1277,6 +1532,8 @@ def main() -> None:
         proxy=proxy,
         chrome_profile=getattr(args, 'chrome_profile', None),
         shots_dir_override=getattr(args, 'shots_dir', None),
+        kuku_creds_path=getattr(args, 'kuku_creds', None),
+        kuku_otp_options=kuku_otp_options or None,
     )
     print(f"[recorder_v2] {len(config.get('actions', []))} action(s), "
           f"{len(events)} event(s)")

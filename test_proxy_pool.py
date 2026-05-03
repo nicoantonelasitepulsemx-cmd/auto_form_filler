@@ -27,6 +27,15 @@ from proxy_utils import load_proxy_dicts, parse_proxy_string
     # password contains `:`
     ("proxy.example.com:3128:bob:s3cr:et",
      {"server": "http://proxy.example.com:3128", "username": "bob", "password": "s3cr:et"}),
+    # v4: password contains `@` — must NOT be misread as user:pass@host
+    ("1.2.3.4:8080:admin:p@ss",
+     {"server": "http://1.2.3.4:8080", "username": "admin", "password": "p@ss"}),
+    # v4: password contains `/` — must NOT be misread as URL path
+    ("1.2.3.4:8080:admin:p/ss",
+     {"server": "http://1.2.3.4:8080", "username": "admin", "password": "p/ss"}),
+    # v4: password contains both `@` and `:` — full mix.
+    ("1.2.3.4:8080:admin:p@s:s",
+     {"server": "http://1.2.3.4:8080", "username": "admin", "password": "p@s:s"}),
     # plain host:port
     ("1.2.3.4:8080", {"server": "http://1.2.3.4:8080"}),
     # creds-before-host

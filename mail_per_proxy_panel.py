@@ -1736,14 +1736,16 @@ class MailPerProxyDialog(tk.Toplevel):
                 parent=self,
             )
             return
-        default_domain = self.domain_var.get().strip()
-        # No local_part on bulk-mint: kuku.lu picks for us. The user
-        # can rotate via "🔄 New address" per row afterwards.
+        # Honour any per-row Local / Domain values the user typed
+        # into the inline cell editor — they are the whole point of
+        # the inline-edit UI. Falls back to the global ``Local part`` /
+        # ``Domain`` boxes via ``_effective_*`` when a row left those
+        # cells blank.
         specs = [
             _BulkSpec(
                 name=r.name,
-                local_part=None,
-                domain=default_domain or None,
+                local_part=self._effective_local(r),
+                domain=self._effective_domain(r),
                 proxy=r.proxy,
                 raw=r.name,
             )

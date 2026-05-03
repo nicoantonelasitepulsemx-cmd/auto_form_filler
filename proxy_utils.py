@@ -103,20 +103,30 @@ def _try_parse_flat(rest: str) -> Optional[dict]:
     A 3-field input (`host:port:user`) is treated as user-supplied
     `user:pass@host` so we don't accept it here — return None and let the
     caller fall through to the URL parser.
+
+    NOTE: ``@`` and ``/`` are *only* forbidden in the host/port halves —
+    they are perfectly legitimate inside the password (e.g.
+    ``host:port:admin:p@ss`` or ``host:port:admin:p/ss``). Splitting on
+    colon with ``maxsplit=3`` first means we can vet only the
+    host/port slice without false-positives on funky passwords.
     """
-    if "@" in rest or "/" in rest:
-        return None
-    parts = rest.split(":")
+    parts = rest.split(":", 3)
     if len(parts) < 2:
         return None
     host = parts[0].strip()
     port_str = parts[1].strip()
+    # Bail out only when the host or port itself contains ``@`` or ``/``
+    # — those characters in the password are fine and must be preserved.
+    if "@" in host or "/" in host or "@" in port_str or "/" in port_str:
+        return None
     if not host or not port_str.isdigit():
         return None
     out: dict[str, Any] = {"server": f"http://{host}:{port_str}"}
     if len(parts) >= 4:
-        # Re-split with maxsplit=3 so a `:` inside the password is preserved.
-        host_, port_, user, pwd = rest.split(":", 3)
+        # ``parts[3]`` already preserves any `:` inside the password
+        # (the maxsplit=3 split above stops before it).
+        user = parts[2]
+        pwd = parts[3]
         if user:
             out["username"] = user
         if pwd != "":
@@ -152,8 +162,15 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
         return None
 
     scheme, rest = _split_scheme(s)
-    # If there's no `@` and at least 3 colons in `rest`, it's the flat format.
-    if not scheme and "@" not in rest and rest.count(":") >= 3:
+    # 3+ colons strongly suggests flat ``host:port:user:pass`` format.
+    # We do NOT short-circuit on ``@`` here because the password field
+    # may legitimately contain it (e.g. ``host:port:user:p@ss``). The
+    # URL form ``user:pass@host:port`` only has 2 colons, so the count
+    # check alone disambiguates. ``_try_parse_flat`` validates the
+    # host/port halves itself and returns None if they aren't sane,
+    # which lets us fall through to the URL parser without false
+    # positives.
+    if not scheme and rest.count(":") >= 3:
         flat = _try_parse_flat(rest)
         if flat is not None:
             return flat

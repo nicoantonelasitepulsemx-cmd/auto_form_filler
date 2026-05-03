@@ -1991,8 +1991,11 @@ def main() -> None:
              "Off by default because every screenshot briefly stalls "
              "the Chromium renderer and produces a visible click flash.",
     )
-    # Back-compat alias: old --no-screenshots still works (was the
-    # opt-out before the default flipped). Now it's a no-op.
+    # Back-compat alias: old ``--no-screenshots`` is silently
+    # accepted but is a true no-op now that the default flipped to
+    # screenshots-off. Combining ``--screenshots --no-screenshots``
+    # therefore enables screenshots (explicit opt-in wins). The flag
+    # is hidden from --help to avoid encouraging future use.
     p.add_argument("--no-screenshots", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--chrome-profile",
@@ -2066,7 +2069,7 @@ def main() -> None:
         out_path=out_path,
         headless=args.headless,
         save_events=not args.no_events,
-        capture_screenshots=bool(args.screenshots) and not args.no_screenshots,
+        capture_screenshots=bool(args.screenshots),
         proxy=proxy,
         chrome_profile=getattr(args, 'chrome_profile', None),
         shots_dir_override=getattr(args, 'shots_dir', None),

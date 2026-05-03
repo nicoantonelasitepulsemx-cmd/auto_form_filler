@@ -1260,10 +1260,16 @@ class MailPerProxyDialog(tk.Toplevel):
             self.local_part_var.set(local)
             self._log(f"[local] copied name \u2192 {local!r}")
             return
+        # Update each selected row's data model AND its rendered cell.
+        # The previous implementation only refreshed the row inside the
+        # single-row branch below \u2014 multi-row updates wrote to
+        # ``row.local`` but the Local column kept showing the old empty
+        # value until a full table rebuild.
         for i in idxs:
             row = self._rows[i]
             local = re.sub(r"[^a-z0-9._\-]+", ".", row.name.strip().lower()).strip("._-")
             row.local = local or None
+            self._refresh_row(i)
         # Back-compat: when exactly one row is selected, also seed the
         # global Local part field so the legacy single-row workflow
         # (and existing tests) keep producing the same result.
@@ -1273,7 +1279,6 @@ class MailPerProxyDialog(tk.Toplevel):
             if local:
                 self.local_part_var.set(local)
             self._log(f"[local] copied name \u2192 {local!r}")
-            self._refresh_row(i)
         self._mark_dirty()
         self._log(f"[local] populated {len(idxs)} row(s) from name")
 

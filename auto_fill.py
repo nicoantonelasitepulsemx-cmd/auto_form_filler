@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -523,12 +524,22 @@ async def run_multi_proxy(
         headless=bool(getattr(args, "headless", False)),
         user_data_dir_template=udd_template,
     )
-    # Strip single-proxy fields so each worker uses its own.
-    cfg = dict(base_config)
+    # Strip single-proxy fields so each worker uses its own. Each
+    # worker needs its OWN copy of the config because some pipeline
+    # steps mutate nested values (e.g. ``actions`` lists for retries,
+    # ``submit`` overrides for self-healing). Sharing a single shallow
+    # copy across all workers in a proxy pool would let one worker's
+    # mutation silently leak into every other concurrent worker. The
+    # GUI counterpart at ``auto_fill_gui.py:2178`` already deep-copies
+    # for the same reason — align the CLI path with it.
+    base_cfg = copy.deepcopy(base_config)
     for k in ("proxy", "proxy_list", "proxy_rotate"):
-        cfg.pop(k, None)
+        base_cfg.pop(k, None)
 
-    tasks = [Task(config=cfg, vars=dict(a.vars), label=a.name) for a in accts]
+    tasks = [
+        Task(config=copy.deepcopy(base_cfg), vars=dict(a.vars), label=a.name)
+        for a in accts
+    ]
     pool = WorkerPool(
         accts,
         max_concurrency=int(getattr(args, "workers", 0) or len(accts)),

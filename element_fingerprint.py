@@ -46,20 +46,41 @@ FINGERPRINT_JS = r"""
   if (!el) return null;
   const tag = el.tagName.toLowerCase();
 
+  // Read a label's visible text, stripping nested form controls so the
+  // text doesn't include the current ``value`` of a sibling input. This
+  // mirrors recorder_v2.py's ``_labelInnerText`` exactly so the recorded
+  // ``accessible_name`` and the live one computed at replay time stay in
+  // sync \u2014 critical for forms where ``<label>`` wraps multiple inputs
+  // (e.g. ``<label><input type="checkbox"> Subscribe</label>`` repeated
+  // for each row in a fieldset). Without this stripping the recorder
+  // would see "Subscribe" but the resolver would see "Subscribe true"
+  // (or whatever the live nested input's value renders as), tanking the
+  // fingerprint score and risking a wrong-sibling pick.
+  const _labelInnerText = (lab) => {
+    if (!lab) return "";
+    try {
+      const clone = lab.cloneNode(true);
+      clone.querySelectorAll("input, textarea, select, script, style").forEach((n) => n.remove());
+      return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+    } catch (e) {
+      return (lab.innerText || lab.textContent || "").replace(/\s+/g, " ").trim();
+    }
+  };
+
   const accessibleName = (() => {
     if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").trim();
     const labelledby = el.getAttribute("aria-labelledby");
     if (labelledby) {
       const ref = document.getElementById(labelledby);
-      if (ref) return (ref.innerText || ref.textContent || "").trim();
+      if (ref) return _labelInnerText(ref);
     }
     if (el.id) {
       const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lab) return (lab.innerText || lab.textContent || "").trim();
+      if (lab) return _labelInnerText(lab);
     }
     let p = el.parentElement;
     while (p && p !== document.body) {
-      if (p.tagName === "LABEL") return (p.innerText || p.textContent || "").trim();
+      if (p.tagName === "LABEL") return _labelInnerText(p);
       p = p.parentElement;
     }
     if (el.getAttribute("placeholder")) return el.getAttribute("placeholder").trim();

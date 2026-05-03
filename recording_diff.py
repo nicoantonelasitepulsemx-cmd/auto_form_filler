@@ -129,18 +129,47 @@ def load_recording(path: str | Path) -> dict[str, Any]:
 # can change either side without breaking the other). The numbers
 # only have to be *relatively* correct for the diff signal — absolute
 # values are normalised in :func:`_score`.
-_WEIGHTS: dict[str, float] = {
+#
+# Schema note: the recorder ships the action like::
+#
+#     {
+#       "frame_chain":  ["top", "#frm", ...],   # action-level
+#       "selectors":    [...],                     # action-level
+#       "fingerprint":  {
+#         "tag":             "input",
+#         "type":            "radio",
+#         "role":            "radio",
+#         "accessible_name": "...",
+#         "text_content":    "...",
+#         "neighbour_text":  "...",
+#         "attributes":      {"id": ..., "name": ..., "placeholder": ...},
+#       },
+#     }
+#
+# That is, ``frame_chain`` lives at the action level (NOT under
+# ``fingerprint``), and ``id``/``name``/``placeholder`` live inside
+# ``fingerprint.attributes``. Earlier versions of this module had the
+# wrong keys here, which silently dropped most of the score weight.
+_FINGERPRINT_WEIGHTS: dict[str, float] = {
     "accessible_name": 5.0,
     "role":             3.0,
     "type":             2.0,
-    "frame_chain":      2.5,
-    "label_text":       2.0,
-    "placeholder":      1.5,
-    "id":               1.5,
-    "name":             1.0,
+    "tag":              0.4,
+    "text_content":     1.0,
     "neighbour_text":   0.8,
-    "tag_name":         0.4,
 }
+
+# Attribute-level keys (looked up inside ``fingerprint.attributes``).
+_ATTR_WEIGHTS: dict[str, float] = {
+    "id":          1.5,
+    "name":        1.0,
+    "placeholder": 1.5,
+    "data-testid": 2.0,
+    "aria-label":  2.0,
+}
+
+# Action-level signal — sits next to ``fingerprint`` on the action.
+_FRAME_CHAIN_WEIGHT: float = 2.5
 
 
 def _identity_key(action: dict[str, Any]) -> tuple[Any, ...]:
@@ -148,43 +177,84 @@ def _identity_key(action: dict[str, Any]) -> tuple[Any, ...]:
 
     We don't use ``field_id`` because the recorder regenerates it on
     every run (counter-based). Instead we hash on the (frame chain,
-    role, accessible name, label) — these are what the resolver also
+    role, accessible name, type) — these are what the resolver also
     keys on at replay time.
+
+    Note: ``frame_chain`` lives on the **action** dict, not the
+    ``fingerprint`` sub-dict. Reading it from the wrong level meant
+    actions across separate iframes (e.g. an OAuth popup vs the main
+    form) collapsed into the same identity bucket.
     """
     fp = action.get("fingerprint") or {}
+    attrs = (fp.get("attributes") or {}) if isinstance(fp.get("attributes"), dict) else {}
     return (
-        tuple(fp.get("frame_chain") or ()),
+        tuple(action.get("frame_chain") or ()),
         (fp.get("role") or "").lower(),
         (fp.get("type") or "").lower(),
         (fp.get("accessible_name") or "").strip().lower(),
-        (fp.get("label_text") or "").strip().lower(),
+        # data-testid is the strongest stable handle when accessible
+        # name is missing (common on icon-only buttons).
+        str(attrs.get("data-testid") or "").strip().lower(),
     )
 
 
-def _score(old_fp: dict[str, Any], new_fp: dict[str, Any]) -> float:
-    """0..1 weighted Jaccard over fingerprint fields."""
-    total = 0.0
-    matched = 0.0
-    for key, weight in _WEIGHTS.items():
-        ov = old_fp.get(key)
-        nv = new_fp.get(key)
-        if ov is None and nv is None:
-            continue
-        total += weight
-        if isinstance(ov, list) or isinstance(nv, list):
-            ov_set = {str(x) for x in (ov or [])}
-            nv_set = {str(x) for x in (nv or [])}
-            if not ov_set and not nv_set:
-                matched += weight
-            else:
-                inter = len(ov_set & nv_set)
-                union = len(ov_set | nv_set) or 1
-                matched += weight * inter / union
+def _weigh(matched: float, total: float, weight: float, ov: Any, nv: Any) -> tuple[float, float]:
+    """Score one (weight, ov, nv) tuple — list-aware Jaccard."""
+    if ov is None and nv is None:
+        return matched, total
+    total += weight
+    if isinstance(ov, list) or isinstance(nv, list):
+        ov_set = {str(x) for x in (ov or [])}
+        nv_set = {str(x) for x in (nv or [])}
+        if not ov_set and not nv_set:
+            matched += weight
         else:
-            ov_s = "" if ov is None else str(ov).strip().lower()
-            nv_s = "" if nv is None else str(nv).strip().lower()
-            if ov_s == nv_s:
-                matched += weight
+            inter = len(ov_set & nv_set)
+            union = len(ov_set | nv_set) or 1
+            matched += weight * inter / union
+    else:
+        ov_s = "" if ov is None else str(ov).strip().lower()
+        nv_s = "" if nv is None else str(nv).strip().lower()
+        if ov_s == nv_s:
+            matched += weight
+    return matched, total
+
+
+def _score_action(old_action: dict[str, Any], new_action: dict[str, Any]) -> float:
+    """Weighted similarity 0..1 across action + fingerprint + attributes.
+
+    Walks the three levels the recorder actually uses:
+      * action top-level: ``frame_chain``
+      * ``fingerprint.*``: tag/type/role/accessible_name/...
+      * ``fingerprint.attributes.*``: id/name/placeholder/...
+    """
+    matched = 0.0
+    total = 0.0
+
+    # Action-level: frame chain is a list, scored as Jaccard.
+    matched, total = _weigh(
+        matched, total, _FRAME_CHAIN_WEIGHT,
+        old_action.get("frame_chain"), new_action.get("frame_chain"),
+    )
+
+    old_fp = old_action.get("fingerprint") or {}
+    new_fp = new_action.get("fingerprint") or {}
+    for key, weight in _FINGERPRINT_WEIGHTS.items():
+        matched, total = _weigh(
+            matched, total, weight, old_fp.get(key), new_fp.get(key),
+        )
+
+    old_attrs = old_fp.get("attributes") or {}
+    new_attrs = new_fp.get("attributes") or {}
+    if not isinstance(old_attrs, dict):
+        old_attrs = {}
+    if not isinstance(new_attrs, dict):
+        new_attrs = {}
+    for key, weight in _ATTR_WEIGHTS.items():
+        matched, total = _weigh(
+            matched, total, weight, old_attrs.get(key), new_attrs.get(key),
+        )
+
     return matched / total if total else 1.0
 
 
@@ -247,20 +317,23 @@ def diff_recordings(
             matched_new.add(ni)
             o_act = old_actions[oi]
             n_act = new_actions[ni]
-            score = _score(o_act.get("fingerprint") or {}, n_act.get("fingerprint") or {})
+            score = _score_action(o_act, n_act)
 
             field_changes = _field_changes(
                 o_act, n_act, keys=("kind", "value", "checked", "selector"),
             )
-            # Compare a few interesting fingerprint sub-fields too —
-            # those are what the resolver actually weighs.
+            # Compare a few interesting fingerprint.attributes sub-fields
+            # too — those are what the resolver actually weighs.
+            old_attrs = (o_act.get("fingerprint") or {}).get("attributes") or {}
+            new_attrs = (n_act.get("fingerprint") or {}).get("attributes") or {}
+            if not isinstance(old_attrs, dict):
+                old_attrs = {}
+            if not isinstance(new_attrs, dict):
+                new_attrs = {}
             field_changes.update({
-                f"fingerprint.{k}": (
-                    (o_act.get("fingerprint") or {}).get(k),
-                    (n_act.get("fingerprint") or {}).get(k),
-                )
-                for k in ("placeholder", "id", "name", "label_text")
-                if (o_act.get("fingerprint") or {}).get(k) != (n_act.get("fingerprint") or {}).get(k)
+                f"attributes.{k}": (old_attrs.get(k), new_attrs.get(k))
+                for k in ("id", "name", "placeholder", "data-testid", "aria-label")
+                if old_attrs.get(k) != new_attrs.get(k)
             })
 
             if field_changes and any(

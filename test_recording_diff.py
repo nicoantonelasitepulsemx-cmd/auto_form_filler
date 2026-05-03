@@ -28,19 +28,31 @@ def _act(
     placeholder: str = "",
     frame_chain: tuple = (),
     type_: str = "",
+    testid: str = "",
 ) -> dict:
+    """Build a recorder-style action dict.
+
+    Mirrors the real recorder layout: ``frame_chain`` lives at the
+    action level, and ``id``/``name``/``placeholder`` live inside
+    ``fingerprint.attributes`` (NOT directly on ``fingerprint``).
+    """
     return {
-        "field_id":  field_id,
-        "kind":      kind,
-        "value":     value,
+        "field_id":    field_id,
+        "kind":        kind,
+        "value":       value,
+        "frame_chain": list(frame_chain) or ["top"],
         "fingerprint": {
+            "tag":             "input",
             "role":            role,
             "type":            type_,
             "accessible_name": name or label or field_id,
-            "label_text":      label,
-            "placeholder":     placeholder,
-            "frame_chain":     list(frame_chain),
-            "id":              field_id,
+            "neighbour_text":  label,
+            "attributes": {
+                "id":          field_id,
+                "name":        field_id,
+                "placeholder": placeholder,
+                "data-testid": testid,
+            },
         },
     }
 
@@ -61,6 +73,8 @@ def test_identical_recordings_score_full() -> None:
 # --------------------------------------------------------------------------- drift
 
 def test_drifted_when_fingerprint_weakens_but_kind_value_same() -> None:
+    """Same identity (role + accessible_name + frame_chain) but the
+    nested ``attributes.placeholder`` text changed \u2014 should drift."""
     old = {"actions": [_act("name", value="alice", placeholder="Your name", label="Name")]}
     new = {"actions": [_act("name", value="alice", placeholder="(removed)", label="Name")]}
     report = rd.diff_recordings(old, new, score_threshold=0.95)
@@ -69,6 +83,51 @@ def test_drifted_when_fingerprint_weakens_but_kind_value_same() -> None:
     diff = report.actions[0]
     assert diff.status == "drifted"
     assert diff.score is not None and diff.score < 1.0
+
+
+def test_frame_chain_is_read_from_action_level_not_fingerprint() -> None:
+    """Regression: identity must include the action-level frame_chain.
+
+    Two actions in different iframes that have the same role +
+    accessible name MUST NOT collapse into the same identity bucket
+    \u2014 doing so would let cross-iframe drift slip past the diff
+    silently.
+    """
+    old = {"actions": [
+        _act("name", frame_chain=("top", "#main")),
+        _act("name", frame_chain=("top", "#popup")),
+    ]}
+    new = {"actions": [
+        _act("name", frame_chain=("top", "#main")),
+        _act("name", frame_chain=("top", "#popup")),
+    ]}
+    report = rd.diff_recordings(old, new)
+    # All four actions match cleanly because frame_chain is read from
+    # the action level, not the (always-absent) fingerprint sub-key.
+    assert report.counts.get("unchanged") == 2
+    assert report.counts.get("added", 0) == 0
+    assert report.counts.get("removed", 0) == 0
+
+
+def test_frame_chain_change_lowers_similarity_score() -> None:
+    """A field that moved between iframes should not score 1.0."""
+    old = {"actions": [_act("name", frame_chain=("top",))]}
+    new = {"actions": [_act("name", frame_chain=("top", "#popup"))]}
+    report = rd.diff_recordings(old, new)
+    # Identity is now different (frame_chain differs), so the action
+    # is reported as added/removed rather than drifted \u2014 either way
+    # the user gets a clear signal something moved.
+    assert report.counts.get("added", 0) + report.counts.get("removed", 0) >= 1
+
+
+def test_attributes_change_marks_drift() -> None:
+    """Change to ``fingerprint.attributes.id`` must lower the score."""
+    old = {"actions": [_act("name")]}
+    new_action = _act("name")
+    new_action["fingerprint"]["attributes"]["id"] = "different_id"
+    report = rd.diff_recordings(old, {"actions": [new_action]}, score_threshold=0.95)
+    # Either drift (score below threshold) or surfaced via field_changes.
+    assert report.counts.get("drifted", 0) + report.counts.get("changed", 0) >= 1
 
 
 # --------------------------------------------------------------------------- value/kind change

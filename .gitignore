@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+samples/
+
+# Test/run artifacts
+recorded_v2_*.json
+recorded_v2_*.events.json
+*_shots/
+shots/
+.devin_work/
+*.tar.gz

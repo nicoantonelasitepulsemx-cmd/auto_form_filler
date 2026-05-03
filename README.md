@@ -278,6 +278,44 @@ The GUI defaults to a dark theme. Toggle via the **☀ Light / ☽ Dark**
 button at the top-right of the window. The choice persists at
 `~/.auto_form_filler_theme`.
 
+## v4 — radio targeting + extension APIs
+
+v4 fixes a bug where picking "I am the rights owner" on
+Facebook's trademark form was being replayed as "I am reporting on
+behalf of someone else". The recorder, replay engine, and resolver
+all received hardening:
+
+- **Recorder**: role=radio clicks ship `checked=true` (radios are
+  never deselected by clicking) instead of the pre-React
+  `aria-checked` value. Sibling-deselect ghosts on `aria-checked`
+  *and* `<input type=radio>` `change` events are dropped silently.
+- **Resolver**: `accessible_name` weight bumped 3.0 → 5.0 with a
+  soft mismatch penalty; exact `value` attribute match earns
+  dedicated weight so two siblings sharing tag/role/neighbour text
+  but different `value`s can no longer tie.
+- **Replay**: refuses to call `uncheck()` on a radio; verifies the
+  live element's accessible name *before* clicking and re-resolves
+  via `page.get_by_role("radio", name=...)` if the resolver picked
+  the wrong sibling; verifies post-click outcome and falls through
+  the escalation ladder on a sibling-mismatch.
+
+A new module **`ai_features.py`** ships three opt-in hooks:
+
+| API | Purpose |
+|-----|---------|
+| `ai_heal(...)`            | LLM-backed selector self-heal. Replay calls it when the resolver returns no candidate. Pure no-op without `OPENAI_API_KEY`; configurable model via `AUTOFORM_AI_HEAL_MODEL`. |
+| `vision_match(rec, cands)`| Perceptual-hash tiebreaker (pure-Python dHash, no Pillow) for selecting between visually similar candidates. |
+| `codegen_export(config)`  | Render a captured recording into a runnable standalone Playwright Python script (no `auto_form_filler` dependency). |
+| `vision_hash(png)`        | Stand-alone perceptual hash helper. |
+| `stable_hash(payload)`    | Deterministic SHA-256 over any JSON-serialisable payload. |
+
+```python
+from ai_features import codegen_export
+print(codegen_export(json.load(open("trademark1.json"))))
+```
+
+See `CHANGELOG.md` for the full v4 release notes.
+
 ## v2 — accurate record + replay
 
 The default recorder is now `recorder_v2.py`, which fixes the

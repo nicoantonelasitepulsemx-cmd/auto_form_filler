@@ -370,6 +370,77 @@ async def _do_click(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         return False
 
 
+async def _verify_radio_outcome(
+    page: Page, loc: Locator, action: dict, logger
+) -> bool:
+    """Confirm the right radio is selected after a check action.
+
+    Returns True iff:
+      * the resolved element ends up aria-checked / .checked = true, AND
+      * its accessible name (or recorded radio_value, if present)
+        matches what the recording expected.
+
+    A False return tells the caller to keep falling through the
+    attempt ladder. This is the central guard against the Facebook
+    trademark-form bug where the resolver's role_name lookup picked
+    a sibling whose accessible name differed only by a few words.
+    """
+    fp = action.get("fingerprint") or {}
+    rec_name = (fp.get("accessible_name") or "").strip()
+    rec_value = (action.get("radio_value") or "").strip()
+    if not rec_name and not rec_value:
+        return True
+    try:
+        live = await loc.evaluate(
+            """el => {
+                const accName = (() => {
+                    const al = el.getAttribute('aria-label');
+                    if (al) return al.trim();
+                    const lbid = el.getAttribute('aria-labelledby');
+                    if (lbid) {
+                        const ref = document.getElementById(lbid);
+                        if (ref) return (ref.innerText || ref.textContent || '').trim();
+                    }
+                    return ((el.innerText || el.textContent || '').trim());
+                })();
+                const checked = el.getAttribute('aria-checked') === 'true' || !!el.checked;
+                return {
+                    name: accName,
+                    value: el.value || el.getAttribute('value') || '',
+                    checked: checked,
+                };
+            }"""
+        )
+    except Exception:
+        return True  # can't verify — give up on the strict check
+    if not live:
+        return True
+    if not live.get("checked"):
+        logger.debug(
+            f"  [CHECK_VERIFY] live element not checked yet (name={live.get('name')!r})"
+        )
+        return False
+
+    def _norm(s: str) -> str:
+        return " ".join((s or "").lower().split())
+
+    if rec_value and _norm(live.get("value", "")) and _norm(rec_value) == _norm(live.get("value", "")):
+        return True
+    if rec_name and _norm(live.get("name", "")) and _norm(rec_name) == _norm(live.get("name", "")):
+        return True
+    if rec_name and _norm(live.get("name", "")):
+        # Substring match in either direction handles "I am the rights
+        # owner." vs "I am the rights owner" or extra decoration.
+        if _norm(rec_name) in _norm(live.get("name", "")) or _norm(live.get("name", "")) in _norm(rec_name):
+            return True
+    logger.warning(
+        f"  [CHECK_VERIFY] checked the wrong sibling: "
+        f"wanted name={rec_name!r}/value={rec_value!r}, "
+        f"got name={live.get('name')!r}/value={live.get('value')!r}"
+    )
+    return False
+
+
 async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
     """Set a checkbox / radio (real <input> or `[role=checkbox|radio]`).
 
@@ -394,6 +465,14 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         P3. Find a nearby visible label/span with matching text → click it
         P4. Structured check()/uncheck() (Playwright may handle some cases)
         P5. JS direct set + React-compatible synthetic event as last resort
+
+    v4 RADIO RULE
+        For radios we **never** uncheck. Old recordings that contain
+        ``check checked=false`` on a role=radio / type=radio element are
+        always sibling-deselect ghosts; we skip them silently rather than
+        risk landing the form on the wrong sibling. Use
+        ``deselect_radio_action`` semantics by recording an explicit
+        check on the desired sibling.
     """
     desired = bool(action.get("checked", True))
     is_click_proxy = bool(action.get("_click_proxy"))
@@ -401,6 +480,21 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
     hidden_input_type = action.get("_hidden_input_type", "radio")
     radio_value = action.get("radio_value")
     neighbour_text = (action.get("fingerprint") or {}).get("neighbour_text", "")
+    fp_role = ((action.get("fingerprint") or {}).get("role") or "").lower()
+    fp_type = ((action.get("fingerprint") or {}).get("type") or "").lower()
+    is_radio_action = (
+        hidden_input_type == "radio"
+        or fp_role == "radio"
+        or fp_type == "radio"
+    )
+
+    # v4 RADIO RULE: drop check-false actions on radios.
+    if is_radio_action and not desired:
+        logger.info(
+            f"  [CHECK_SKIP] {action.get('field_id')!r}: ignoring "
+            "checked=false on a radio (sibling-deselect ghost)"
+        )
+        return True
 
     try:
         await loc.scroll_into_view_if_needed(timeout=3000)
@@ -632,13 +726,77 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
 
     # ==================== NORMAL PATH (visible inputs / ARIA widgets) ====================
 
+    # v4 PRE-CHECK target verification for radios: before we touch the
+    # element, confirm the resolved candidate's accessible name / value
+    # matches what we recorded. If the resolver picked the wrong sibling
+    # (a real risk on FB-style radio groups where every option shares
+    # tag, role, neighbour text, viewport position) we re-resolve with
+    # the recorded label/value as a stricter Playwright text selector
+    # before issuing any click.
+    if is_radio_action and desired:
+        recorded_name = ((action.get("fingerprint") or {}).get("accessible_name") or "").strip()
+        try:
+            live = await loc.evaluate(
+                """el => ({
+                    aria: (el.getAttribute('aria-label') || '').trim(),
+                    labelledby: el.getAttribute('aria-labelledby') || '',
+                    text: ((el.innerText || el.textContent || '').trim()),
+                    value: el.value || el.getAttribute('value') || '',
+                })"""
+            )
+        except Exception:
+            live = None
+        live_name = ""
+        if live:
+            live_name = (live.get("aria") or "").strip()
+            if not live_name and live.get("labelledby"):
+                try:
+                    live_name = (
+                        await page.evaluate(
+                            "id => { const e = document.getElementById(id);"
+                            " return e ? (e.innerText || e.textContent || '').trim() : ''; }",
+                            live["labelledby"],
+                        )
+                    ) or ""
+                except Exception:
+                    pass
+            if not live_name:
+                live_name = (live.get("text") or "").strip()
+
+        def _norm_name(s: str) -> str:
+            return " ".join((s or "").lower().split())
+
+        if recorded_name and _norm_name(recorded_name) != _norm_name(live_name):
+            logger.warning(
+                f"  [CHECK_VERIFY] resolver picked {live_name!r} but "
+                f"recording wanted {recorded_name!r} — re-resolving"
+            )
+            # Re-resolve via Playwright's role-name lookup with the
+            # recorded accessible name as an exact-ish match. We allow
+            # the `name` to be a substring (exact=False) because some
+            # apps add invisible decoration to the label.
+            try:
+                candidate = page.get_by_role("radio", name=recorded_name, exact=False).first
+                if (await candidate.count()) > 0:
+                    loc = candidate
+                    logger.info("  [CHECK_VERIFY] re-resolved via get_by_role(radio, name=...)")
+            except Exception:
+                pass
+
     # ---- Attempt 1: structured check/uncheck (works for real visible inputs) ----
     try:
         if desired:
             await loc.check(timeout=5000)
         else:
             await loc.uncheck(timeout=5000)
-        return True
+        # v4 POST-CHECK: for radios, verify the action actually
+        # succeeded AND no sibling is wrongly checked.
+        if is_radio_action and not await _verify_radio_outcome(
+            page, loc, action, logger,
+        ):
+            logger.warning("  [CHECK_VERIFY] structured check passed but state mismatch; falling through")
+        else:
+            return True
     except Exception:
         pass
 
@@ -647,8 +805,13 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         await loc.click(timeout=5000)
         await asyncio.sleep(0.15)
         if await _is_checked() == desired:
-            logger.info("  [CHECK_OK] healed via click")
-            return True
+            if is_radio_action and not await _verify_radio_outcome(
+                page, loc, action, logger,
+            ):
+                logger.warning("  [CHECK_VERIFY] click succeeded but wrong sibling — falling through")
+            else:
+                logger.info("  [CHECK_OK] healed via click")
+                return True
     except Exception:
         pass
 
@@ -657,8 +820,13 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         await loc.click(force=True, timeout=5000)
         await asyncio.sleep(0.15)
         if await _is_checked() == desired:
-            logger.info("  [CHECK_OK] healed via force-click")
-            return True
+            if is_radio_action and not await _verify_radio_outcome(
+                page, loc, action, logger,
+            ):
+                logger.warning("  [CHECK_VERIFY] force-click succeeded but wrong sibling — falling through")
+            else:
+                logger.info("  [CHECK_OK] healed via force-click")
+                return True
     except Exception:
         pass
 
@@ -914,6 +1082,55 @@ async def run_action(
         except Exception as exc:
             last_err = exc
         await asyncio.sleep(0.3 * attempt)
+
+    if not resolved:
+        # v4 escalation: optional LLM-backed self-heal. The hook is a
+        # pure no-op when ``OPENAI_API_KEY`` is not set, so importing
+        # / wiring it has zero impact on default behaviour.
+        try:
+            from ai_features import ai_heal  # local import keeps module optional
+        except Exception:
+            ai_heal = None  # type: ignore[assignment]
+        if ai_heal is not None:
+            try:
+                snippet = ""
+                try:
+                    snippet = await page.content()
+                    if len(snippet) > 4000:
+                        snippet = snippet[:4000]
+                except Exception:
+                    pass
+                tried = ", ".join(
+                    s.get("selector", "?")
+                    for s in (action.get("selectors") or [])
+                    if isinstance(s, dict)
+                )[:300]
+                heal = ai_heal(
+                    fingerprint=action.get("fingerprint"),
+                    last_selector=tried,
+                    snippet=snippet,
+                    failure_reason="resolver returned no candidate",
+                )
+                if heal.ok:
+                    try:
+                        ai_loc = page.locator(heal.selector)
+                        if (await ai_loc.count()) > 0:
+                            logger.info(
+                                f"  [AI_HEAL] {heal.selector!r} ({heal.rationale})"
+                            )
+                            resolved = ResolveResult(
+                                locator=ai_loc.first,
+                                frame=page.main_frame,
+                                strategy="ai_heal",
+                                selector=heal.selector,
+                                score=0.51,
+                            )
+                    except Exception as exc:
+                        logger.debug(f"  [AI_HEAL] selector unusable: {exc}")
+                else:
+                    logger.debug(f"  [AI_HEAL] skipped: {heal.rationale}")
+            except Exception as exc:
+                logger.debug(f"  [AI_HEAL] error: {exc}")
 
     if not resolved:
         logger.warning(

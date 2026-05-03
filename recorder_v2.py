@@ -479,10 +479,34 @@ OVERLAY_JS = r"""
       });
       return;
     }
-    if (tag === "input" && t === "radio" && el.checked) {
+    if (tag === "input" && t === "radio") {
+      // v4 R1 FIX: only ship when a radio is becoming CHECKED. Native
+      // radios cannot be unchecked through user gestures — a change
+      // event firing with el.checked=false on a radio is always
+      // either a sibling-deselect ghost (browser fires `change` on the
+      // previously-selected radio when a new one is picked) or a
+      // form-reset, never a user pick. Replay should not act on it.
+      if (!el.checked) {
+        // Mark suppression so any aria-checked observer event fired for
+        // this same input within the next ~1.5s is also dropped.
+        el.__af_sibling_suppress_ts = ts();
+        return;
+      }
       if (el.__af_proxy_ts && (ts() - el.__af_proxy_ts) < 800) {
         delete el.__af_proxy_ts;
         return;
+      }
+      // When this radio was just selected, mark every other radio in
+      // the same name-group as a "sibling suppress" target so their
+      // upcoming change(checked=false) bursts don't reach the recorder.
+      if (el.name) {
+        try {
+          const sibs = document.querySelectorAll(
+            'input[type="radio"][name="' + el.name.replace(/"/g, '\\"') + '"]');
+          for (const s of sibs) {
+            if (s !== el) s.__af_sibling_suppress_ts = ts();
+          }
+        } catch (_) { /* swallow */ }
       }
       ship("check", el, {
         checked: true,
@@ -730,7 +754,42 @@ OVERLAY_JS = r"""
     const tag = el.tagName.toLowerCase();
 
     if (role === "checkbox" || role === "radio") {
-      const checked = el.getAttribute("aria-checked") === "true";
+      // v4 R1 FIX (radio mis-targeting bug):
+      //   The recorder's capture-phase click handler runs BEFORE React/Vue
+      //   listeners get a chance to flip aria-checked, so reading
+      //   aria-checked here gives the *pre-click* value. For role=radio
+      //   that is always "false" the first time the user picks an option,
+      //   which then made the replay engine treat the action as "uncheck"
+      //   — leaving the form on its previously-rendered (wrong) sibling.
+      //
+      //   Radios can NEVER be deselected by clicking — clicking a radio
+      //   either selects it or is a no-op (already selected). So for any
+      //   user click on a role=radio element we ship checked=true.
+      //
+      //   For role=checkbox we ship the *toggle target*: the new state
+      //   the user is moving to. wasChecked=true → desired=false (untick),
+      //   wasChecked=false → desired=true (tick).
+      //
+      //   The MutationObserver below still captures aria-checked flips
+      //   from non-click sources (kbd, programmatic), with sibling
+      //   ghost-suppression handled inline.
+      const wasChecked = el.getAttribute("aria-checked") === "true";
+      const checked = (role === "radio") ? true : !wasChecked;
+      // Mark this element as "user picked" so the MutationObserver can
+      // suppress the sibling burst that React fires on every radio in
+      // the group when the selection changes.
+      if (role === "radio") {
+        el.__af2_user_pick_ts = ts();
+        // Also mark every same-name / same-radiogroup sibling so the
+        // burst that flips them to false is recognised as ghost noise.
+        try {
+          const grp = el.closest('[role="radiogroup"], fieldset, form, body') || document;
+          const sibs = grp.querySelectorAll('[role="radio"]');
+          for (const s of sibs) {
+            if (s !== el) s.__af2_sibling_suppress_ts = ts();
+          }
+        } catch (_) { /* swallow */ }
+      }
       ship("check", el, { checked });
       return;
     }
@@ -851,9 +910,48 @@ OVERLAY_JS = r"""
       if (!(el instanceof Element)) continue;
       const role = el.getAttribute("role") || "";
       if (role !== "checkbox" && role !== "radio") continue;
+      const nowChecked = el.getAttribute("aria-checked") === "true";
+
+      // v4 R2 FIX: ghost-suppress sibling radio flips.
+      //
+      //   When the user picks a radio, every other radio in the same
+      //   radiogroup flips to aria-checked="false". Without
+      //   suppression we shipped one ``check checked=false`` per
+      //   sibling — and replay would then try to UNCHECK them, which
+      //   on most ARIA radios fails or worse stomps on the user's
+      //   actual pick. The click-handler above marks each sibling
+      //   with ``__af2_sibling_suppress_ts`` so we know to drop the
+      //   matching MutationObserver event here.
+      if (role === "radio" && !nowChecked) {
+        const supp = el.__af2_sibling_suppress_ts;
+        if (supp && ts() - supp < 1500) {
+          // Sibling ghost — drop entirely. Don't even update the
+          // dedup timestamp so a real later user toggle still records.
+          continue;
+        }
+        // Even without a suppression mark, refuse to ship false-flips
+        // for radios: clicking a radio NEVER unselects it, so a
+        // false-flip from any source is either a sibling burst or a
+        // form reset. Either way it's not a user gesture worth
+        // replaying — replay will deselect implicitly when a later
+        // action selects a different sibling.
+        continue;
+      }
+
+      // Click-handler dedup: when the click branch already shipped a
+      // ``check`` for this element a moment ago, suppress the
+      // observer's repeat (otherwise we double-fire on every pick).
+      const userPickTs = el.__af2_user_pick_ts;
+      if (userPickTs && ts() - userPickTs < 800) {
+        // We already shipped from the click handler with the correct
+        // ``checked`` value. Drop the observer event silently.
+        el.__af2_last_aria_ts = ts();
+        continue;
+      }
+
       if (el.__af2_last_aria_ts && ts() - el.__af2_last_aria_ts < 600) continue;
       el.__af2_last_aria_ts = ts();
-      ship("check", el, { checked: el.getAttribute("aria-checked") === "true" });
+      ship("check", el, { checked: nowChecked });
     }
   });
   const _installAriaObserver = () => {

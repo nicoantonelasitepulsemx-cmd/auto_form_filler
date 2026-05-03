@@ -179,7 +179,23 @@ def fingerprint_score(recorded: dict, current: dict) -> float:
     weigh(1.5, _norm(recorded.get("role")) == _norm(current.get("role")))
 
     # Accessible name: the strongest single signal.
-    weigh(3.0, _norm(recorded.get("accessible_name")) == _norm(current.get("accessible_name")))
+    # v4: bump weight from 3.0 → 5.0 so two ARIA radios in the same
+    # group whose names differ ("I am the rights owner" vs "I am
+    # reporting on behalf...") cannot tie on the rest of the
+    # fingerprint and let the wrong sibling sneak through. We also
+    # add a SOFT mismatch penalty so a non-empty recorded name that
+    # disagrees with a non-empty live name actively hurts the score.
+    rec_name = _norm(recorded.get("accessible_name"))
+    cur_name = _norm(current.get("accessible_name"))
+    weigh(5.0, rec_name == cur_name and (rec_name or cur_name))
+    if rec_name and cur_name and rec_name != cur_name:
+        # Substring relationship still earns *partial* credit so
+        # cosmetic decoration (extra punctuation, "(required)") is
+        # tolerated. Disjoint names penalize.
+        if rec_name in cur_name or cur_name in rec_name:
+            weigh(1.5, True)
+        else:
+            weigh(2.0, False)  # mismatch penalty
 
     # Attributes: count exact matches on the interesting subset.
     rec_attrs = recorded.get("attributes") or {}
@@ -188,6 +204,17 @@ def fingerprint_score(recorded: dict, current: dict) -> float:
     if common_keys:
         matches = sum(1 for k in common_keys if _norm(rec_attrs.get(k)) == _norm(cur_attrs.get(k)))
         weigh(2.0, matches / len(common_keys) >= 0.7)
+
+    # v4: when both fingerprints carry a `value` attribute (radios /
+    # checkboxes), exact value match is a near-decisive signal that
+    # we picked the right sibling. We score it independently from
+    # the broader attribute match so that a sibling with the same
+    # tag/role/neighbour_text but the WRONG value can never sneak
+    # ahead of the right one.
+    rec_val = _norm(rec_attrs.get("value"))
+    cur_val = _norm(cur_attrs.get("value"))
+    if rec_val and cur_val:
+        weigh(3.0, rec_val == cur_val)
 
     # Neighbour text: substring overlap. We only need a chunk to match because
     # menus/buttons around a field rarely change in their entirety.

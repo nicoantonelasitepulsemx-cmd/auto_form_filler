@@ -1,5 +1,86 @@
 # Changelog
 
+## v4.0 — Radio targeting + ai_features extension pack (2026-05)
+
+Bug-driven release. The user reported that picking "I am the rights
+owner" on Facebook's trademark form was being replayed as "I am
+reporting on behalf of someone else". Three independent root causes
+contributed; v4 closes all of them and ships three optional
+extension hooks (LLM self-heal, vision tiebreaker, codegen export).
+
+### Radio mis-targeting fix
+
+- **R1 — recorder ships the right `checked` value.** The capture-phase
+  `click` handler used to read `aria-checked` *before* React updated
+  the attribute, shipping `check checked=false` on the option the user
+  was selecting. v4 ships `checked=true` for every role=radio click
+  (a radio cannot be deselected by clicking) and the toggle-target
+  state for role=checkbox.
+- **R2 — sibling-deselect ghosts are suppressed.** When the user picks
+  a radio, every other radio in the group flips to
+  `aria-checked=false`. The MutationObserver now silently drops these
+  ghost flips (and a matching native `change` handler does the same
+  for `<input type=radio>`-based groups). Replay never tries to
+  uncheck a sibling.
+- **R3 — replay refuses to uncheck radios.** `_do_check` short-circuits
+  any action whose target is a radio with `checked=false` and treats
+  it as a no-op, returning success.
+- **R4 — fingerprint scoring weights `accessible_name` more heavily.**
+  Bumped the weight from 3.0 → 5.0 plus added a soft mismatch penalty
+  so two ARIA radios in the same fieldset whose names differ ("rights
+  owner" vs. "reporting on behalf...") cannot tie on the rest of the
+  fingerprint.
+- **R5 — exact `value` match earns dedicated weight.** Radios that
+  share neighbour text/role/tag but carry different `value` attributes
+  now score independently so a sibling with the wrong value cannot
+  out-rank the right one.
+- **R6 — pre-click target verification + auto re-resolve.** Before
+  replaying any radio action, the engine reads the live element's
+  accessible name and re-resolves via
+  `page.get_by_role("radio", name=...)` if the resolver picked the
+  wrong sibling. After each click attempt it verifies the radio that
+  ended up selected matches the recorded fingerprint; on a mismatch
+  the attempt is treated as a failure and the next escalation in the
+  ladder runs.
+
+### New extension APIs (`ai_features.py`)
+
+All three are opt-in and have zero impact on the existing pipeline
+when their preconditions aren't met.
+
+- **`ai_heal(...)`** — LLM-backed selector self-heal. When the
+  resolver returns no candidate, the replay engine consults
+  `ai_features.ai_heal` for a Playwright-compatible selector. Pure
+  no-op without `OPENAI_API_KEY`. Configurable model via
+  `AUTOFORM_AI_HEAL_MODEL` (default `gpt-4o-mini`).
+- **`vision_match(recorded_png, candidates_png)`** — perceptual-hash
+  tiebreaker for the case where the resolver returns multiple
+  high-confidence candidates (e.g. two radios that match every other
+  signal). Pure-Python dHash; no Pillow or external services.
+- **`codegen_export(config)`** — render any captured recording into a
+  runnable standalone Playwright Python script. Useful for hand-off,
+  bug reports, and converting an `auto_form_filler` recording into a
+  generic Playwright scenario.
+- **`stable_hash(payload)`** — deterministic SHA-256 over any
+  JSON-serializable payload. Used internally for cache keys; exposed
+  for callers wanting reproducible action signatures.
+
+### Tests
+
+- `test_recorder_radio_v4_bug.py` — pytest regression that captures a
+  click on the "I am the rights owner" sibling, asserts no
+  `check checked=false` ghost is shipped, asserts no sibling-flip
+  action is shipped on the agent radio, and replays end-to-end to
+  confirm only the right sibling ends up selected.
+- `test_ai_features.py` — 11 unit tests covering vision_match
+  (dHash stability, exact-match preference, empty-candidates
+  guard), ai_heal (no-key no-op, mocked LLM round-trip, malformed
+  response handling), codegen_export (selector preference order,
+  generated script validity, unknown-kind fallback), and
+  stable_hash (order-independence, distinct-input distinction).
+
+Total pytest count: **60 passing** (up from 48 in v3).
+
 ## v2.1 — Recorder accuracy + Mail-per-proxy bulk register (2026-04)
 
 Two user-requested upgrades, both fully backwards-compatible with v2

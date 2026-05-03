@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import struct
 import sys
 import zlib
@@ -166,6 +167,63 @@ def test_ai_heal_explicit_key_routes_through_urlopen(monkeypatch):
     assert res.selector and res.selector.startswith("role=radio")
     assert "obvious" in res.rationale
     assert captured["url"].startswith("https://api.openai.com")
+
+
+def test_ai_heal_strips_markdown_fences_with_trailing_newline(monkeypatch):
+    """Common chat-model output: ```json\\n{...}\\n```\\n must parse."""
+    class _FakeResp:
+        def __init__(self, body: bytes):
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    fenced_payload = (
+        '```json\n{"selector":"role=button[name=\\"Submit\\"]",'
+        '"rationale":"only button"}\n```\n'
+    )
+    body = json.dumps(
+        {"choices": [{"message": {"content": fenced_payload}}]}
+    ).encode("utf-8")
+
+    import urllib.request as _ur
+    monkeypatch.setattr(_ur, "urlopen", lambda *a, **kw: _FakeResp(body))
+    res = ai_heal(api_key="sk-test")
+    assert res.ok, f"selector should parse, got rationale={res.rationale!r}"
+    assert res.selector == 'role=button[name="Submit"]'
+
+
+def test_ai_heal_strips_markdown_fences_no_lang_tag(monkeypatch):
+    """Bare ```...``` (no `json` tag) must also parse cleanly."""
+    class _FakeResp:
+        def __init__(self, body: bytes):
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    fenced_payload = '```\n{"selector":"#x","rationale":"r"}\n```'
+    body = json.dumps(
+        {"choices": [{"message": {"content": fenced_payload}}]}
+    ).encode("utf-8")
+
+    import urllib.request as _ur
+    monkeypatch.setattr(_ur, "urlopen", lambda *a, **kw: _FakeResp(body))
+    res = ai_heal(api_key="sk-test")
+    assert res.ok
+    assert res.selector == "#x"
 
 
 def test_ai_heal_handles_malformed_response(monkeypatch):

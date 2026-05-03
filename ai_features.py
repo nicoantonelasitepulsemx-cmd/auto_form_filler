@@ -210,10 +210,18 @@ def ai_heal(
 
     text = raw
     # Strip markdown fences if the model wrapped JSON in ```...```.
+    # We do this line-by-line because ``text.strip("`")`` would only
+    # peel backticks from the *outer* edges — it leaves the closing
+    # fence intact whenever the response ends in a newline (the
+    # default for most chat models), which then breaks ``json.loads``
+    # with an "Extra data" error.
     if text.startswith("```"):
-        text = text.strip("`")
-        # drop optional language tag (e.g. "json\n...")
-        text = text.split("\n", 1)[-1] if "\n" in text else text
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]  # drop opening fence + optional language tag
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]  # drop closing fence
+        text = "\n".join(lines).strip()
     try:
         parsed = json.loads(text)
         sel = parsed.get("selector")

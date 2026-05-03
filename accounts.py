@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from kuku_lu import KukuCreds
+
 
 @dataclass
 class Account:
@@ -39,11 +41,18 @@ class Account:
     headless: bool = False
     viewport: dict[str, int] = field(default_factory=lambda: {"width": 1280, "height": 800})
     user_agent: Optional[str] = None
+    # Optional kuku.lu disposable-mail identity for this account.
+    # Used by the OTP integration so each proxy/account drains its own inbox.
+    kuku: Optional[KukuCreds] = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Account":
         if "name" not in d or not d["name"]:
             raise ValueError("account is missing 'name'")
+        kuku_data = d.get("kuku")
+        kuku: Optional[KukuCreds] = None
+        if isinstance(kuku_data, dict) and kuku_data.get("csrf_token"):
+            kuku = KukuCreds.from_dict(kuku_data)
         return cls(
             name=str(d["name"]),
             user_data_dir=d.get("user_data_dir"),
@@ -54,6 +63,7 @@ class Account:
             headless=bool(d.get("headless", False)),
             viewport=dict(d.get("viewport") or {"width": 1280, "height": 800}),
             user_agent=d.get("user_agent"),
+            kuku=kuku,
         )
 
 
@@ -82,4 +92,51 @@ def load_accounts(path: str | Path) -> list[Account]:
     return out
 
 
-__all__ = ["Account", "load_accounts"]
+def accounts_from_proxies(
+    proxies: list[Any],
+    *,
+    name_prefix: str = "proxy",
+    headless: bool = False,
+    base_vars: Optional[dict[str, Any]] = None,
+    user_data_dir_template: Optional[str] = None,
+) -> list[Account]:
+    """Synthesise one :class:`Account` per proxy.
+
+    Used by the multi-proxy parallel runner — each worker in the pool gets
+    its own ``BrowserContext`` bound to one proxy, so N proxies → N parallel
+    pages running the same task config.
+
+    Args:
+        proxies: list of proxy values (strings or Playwright dicts) — anything
+            accepted by ``proxy_utils.normalize_proxy``.
+        name_prefix: account name template; the index is appended (``proxy_1``).
+        headless: run each context headless.
+        base_vars: optional vars dict copied into every account.
+        user_data_dir_template: optional path template; ``{i}`` is replaced
+            with the 1-based proxy index, ``{name}`` with the account name.
+            When set, every account gets its own persistent profile so
+            cookies/storage don't bleed across proxies.
+
+    Returns:
+        list[Account] — one per proxy, in input order.
+    """
+    base_vars = dict(base_vars or {})
+    out: list[Account] = []
+    for i, proxy in enumerate(proxies, start=1):
+        name = f"{name_prefix}_{i}"
+        udd: Optional[str] = None
+        if user_data_dir_template:
+            udd = user_data_dir_template.format(i=i, name=name)
+        out.append(
+            Account(
+                name=name,
+                user_data_dir=udd,
+                proxy=proxy,
+                vars=dict(base_vars),
+                headless=headless,
+            )
+        )
+    return out
+
+
+__all__ = ["Account", "accounts_from_proxies", "load_accounts"]

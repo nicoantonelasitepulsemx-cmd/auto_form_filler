@@ -1,0 +1,179 @@
+{
+  "_comment": "Facebook Trademark Report Form — page 1 (the form itself). After --submit, Facebook will send a confirmation code to the email below; use run_with_email_otp.py to auto-fetch it from IMAP and fill the OTP page.",
+  "target_url": "https://www.facebook.com/help/contact/1212725848140000",
+  "wait_for_selector": "form, [role='form']",
+  "headless": false,
+  "dry_run": true,
+  "pause_on_captcha": true,
+  "captcha_timeout": 600,
+  "submit_selectors": [
+    "button[type='submit']",
+    "div[role='button']:has-text('Submit')",
+    "button:has-text('Submit')",
+    "div[role='button']:has-text('Send')"
+  ],
+  "fields": [
+    {
+      "field_id": "report_kind",
+      "field_type": "radio",
+      "value": true,
+      "targets": [
+        {"strategy": "label_text", "selector": "Continue with my trademark report"},
+        {"strategy": "css",        "selector": "input[type='radio'][value*='trademark' i]"}
+      ]
+    },
+    {
+      "field_id": "rights_owner_relationship",
+      "field_type": "radio",
+      "value": true,
+      "targets": [
+        {"strategy": "label_text", "selector": "I am the rights owner."},
+        {"strategy": "label_text", "selector": "I am the rights owner"},
+        {"strategy": "css",        "selector": "input[type='radio'][value='self' i]"}
+      ]
+    },
+    {
+      "field_id": "full_name",
+      "value": "Nguyen Van Phu",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Your full name"},
+        {"strategy": "aria_label",  "selector": "input[aria-label='Your full name']"},
+        {"strategy": "id",          "selector": "input[name='full_name']"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='full name' i]"}
+      ]
+    },
+    {
+      "field_id": "email",
+      "field_type": "email",
+      "value": "your.address@example.com",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Email address"},
+        {"strategy": "type",        "selector": "input[type='email']"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='email' i]"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='email' i]"}
+      ]
+    },
+    {
+      "field_id": "email_confirm",
+      "field_type": "email",
+      "value": "your.address@example.com",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Confirm your email address"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='confirm' i][aria-label*='email' i]"},
+        {"strategy": "css",         "selector": "input[type='email']:nth-of-type(2)"}
+      ]
+    },
+    {
+      "field_id": "rights_owner_name",
+      "value": "Nguyen Van Phu",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Name of the rights owner"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='rights owner' i]"}
+      ]
+    },
+    {
+      "field_id": "rights_owner_url",
+      "field_type": "url",
+      "value": "https://www.example.com/",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Provide a link to the rights owner's official online presence"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='example.com' i]"},
+        {"strategy": "type",        "selector": "input[type='url']"}
+      ]
+    },
+    {
+      "field_id": "trademark_name",
+      "value": "EXAMPLE BRAND",
+      "targets": [
+        {"strategy": "label_text",  "selector": "What is the trademark?"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='trademark' i]"}
+      ]
+    },
+    {
+      "field_id": "trademark_country",
+      "field_type": "select",
+      "value": "Vietnam",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Where is the trademark registered"},
+        {"strategy": "aria_label",  "selector": "select[aria-label*='country' i]"},
+        {"strategy": "css",         "selector": "select"}
+      ]
+    },
+    {
+      "field_id": "trademark_registration_number",
+      "field_type": "textarea",
+      "value": "4-0000000-000",
+      "targets": [
+        {"strategy": "label_text",  "selector": "What is the trademark registration number?"},
+        {"strategy": "aria_label",  "selector": "textarea[aria-label*='registration number' i]"}
+      ]
+    },
+    {
+      "field_id": "trademark_registration_url",
+      "field_type": "url",
+      "value": "https://wipopublish.ipvietnam.gov.vn/wopublish-search/public/trademarks?0",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Provide a link (URL) leading directly to the trademark registration"},
+        {"strategy": "type",        "selector": "input[type='url']:nth-of-type(2)"}
+      ]
+    },
+    {
+      "field_id": "infringement_reason_uses_trademark",
+      "field_type": "checkbox",
+      "value": true,
+      "targets": [
+        {"strategy": "label_text", "selector": "This photo, video, post, story or ad uses the rights owner's trademark"},
+        {"strategy": "css",        "selector": "input[type='checkbox'][value*='photo' i]"}
+      ]
+    },
+    {
+      "field_id": "infringement_reason_profile_pic",
+      "field_type": "checkbox",
+      "value": false,
+      "targets": [
+        {"strategy": "label_text", "selector": "The rights owner's trademark is used in the profile picture"},
+        {"strategy": "css",        "selector": "input[type='checkbox'][value*='profile' i]"}
+      ]
+    },
+    {
+      "field_id": "infringement_reason_other",
+      "field_type": "checkbox",
+      "value": false,
+      "targets": [
+        {"strategy": "label_text", "selector": "Other"}
+      ]
+    },
+    {
+      "field_id": "infringing_links",
+      "field_type": "multi_textarea",
+      "value": [
+        "https://www.facebook.com/post-or-page-1",
+        "https://www.facebook.com/post-or-page-2",
+        "https://www.facebook.com/post-or-page-3"
+      ],
+      "targets": [
+        {"strategy": "placeholder", "selector": "textarea[placeholder*='facebook.com' i]"},
+        {"strategy": "css",         "selector": "textarea[placeholder*='facebook.com' i], input[placeholder*='facebook.com' i]"}
+      ]
+    },
+    {
+      "field_id": "description",
+      "field_type": "textarea",
+      "value": "The reported pages/posts use my registered trademark in their profile name, branding and product imagery without authorisation, in a way that is likely to confuse consumers as to the source of the goods/services.",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Describe how you believe this content infringes"},
+        {"strategy": "aria_label",  "selector": "textarea[aria-label*='describe' i]"},
+        {"strategy": "nearby_text", "selector": "Describe how you believe this content infringes"}
+      ]
+    },
+    {
+      "field_id": "electronic_signature",
+      "value": "Nguyen Van Phu",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Electronic signature"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='signature' i]"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='signature' i]"}
+      ]
+    }
+  ]
+}

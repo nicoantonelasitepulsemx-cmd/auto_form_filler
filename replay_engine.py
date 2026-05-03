@@ -113,15 +113,103 @@ def _interpolate(template: str, ctx: Mapping[str, Any]) -> str:
     return re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", sub, template)
 
 
+async def _fetch_otp_code(
+    page: Page,
+    action: dict,
+    ctx: Optional[Mapping[str, Any]],
+    *,
+    logger,
+) -> Optional[str]:
+    """Resolve the value for an ``otp_paste`` action.
+
+    Strategy (first wins):
+
+    1. ``ctx['_kuku']`` is a pre-built :py:class:`kuku_lu.Kuku` instance.
+       Use it directly — pure function, no network setup happens here.
+    2. ``ctx['_kuku_creds']`` is a :py:class:`kuku_lu.KukuCreds`. Build
+       a Playwright-backed client against the current ``page`` and reuse
+       it for the duration of this action.
+    3. Fall back to the literal ``action['value']`` recorded at capture
+       time. This is mostly useful for dry-runs and unit tests; in real
+       runs the recorded code has long since expired.
+
+    Returns the code as a string, or ``None`` when no path produces one
+    so the caller can skip cleanly.
+    """
+    source = action.get("source") or {}
+    if (source.get("kind") or "kuku.lu") != "kuku.lu":
+        logger.warning(f"  [otp] unknown source kind {source.get('kind')!r}; using recorded value")
+        return action.get("value") or None
+
+    address = source.get("address")
+    regex = source.get("regex") or r"(?<!\d)(\d{5,8})(?!\d)"
+    from_filter = source.get("from_filter")
+    timeout_ms = int(source.get("timeout_ms") or 180000)
+
+    if ctx is not None:
+        existing = ctx.get("_kuku")
+        if existing is not None:
+            try:
+                return await existing.wait_for_code(
+                    address,
+                    regex=regex,
+                    timeout=timeout_ms / 1000.0,
+                    from_filter=from_filter,
+                )
+            except Exception as exc:
+                logger.warning(f"  [otp] Kuku.wait_for_code failed: {exc!r}")
+
+        creds = ctx.get("_kuku_creds")
+        if creds is not None:
+            try:
+                from kuku_lu import Kuku
+                async with await Kuku.from_playwright(page, creds=creds) as k:
+                    return await k.wait_for_code(
+                        address,
+                        regex=regex,
+                        timeout=timeout_ms / 1000.0,
+                        from_filter=from_filter,
+                    )
+            except Exception as exc:
+                logger.warning(f"  [otp] Kuku.from_playwright failed: {exc!r}")
+
+    # Last-resort: replay the literally-recorded code so dry-runs / unit
+    # tests still produce a value. The actual code will be stale in a
+    # real OTP scenario but this keeps the pipeline functional.
+    rec = action.get("value")
+    if rec:
+        logger.warning(
+            "  [otp] no Kuku client in ctx — using recorded code as fallback. "
+            "Pass ctx['_kuku_creds']=KukuCreds(...) to fetch a fresh code."
+        )
+        return str(rec)
+    return None
+
+
 def _resolve_value(action: dict, ctx: Optional[Mapping[str, Any]]) -> Any:
-    """Pick `value_template` (with interpolation) over `value` if present.
+    """Pick ``value_template`` (with interpolation) over ``value`` if present.
 
     After picking the raw value, expand ``{{date}}`` / ``{{uuid4}}`` /
     ``{{random_email}}`` / ``{{env:NAME}}`` / etc. via :mod:`value_templates`
     so each replay run gets a fresh value when the user templates fields.
+
+    Bug fix: when ``value_template`` is present but no matching variable
+    is available in ``ctx`` (or ctx is ``None``), the previous code
+    happily passed ``"{email}"`` straight to the page, producing a
+    literal ``{email}`` in the form. We now detect any leftover
+    ``{name}`` placeholder after interpolation and fall back to the
+    captured ``value`` so replay on a fresh ctx still works.
     """
-    if "value_template" in action and ctx is not None:
-        raw = _interpolate(action["value_template"], ctx)
+    raw: Any
+    if "value_template" in action and action["value_template"]:
+        raw = _interpolate(action["value_template"], ctx or {})
+        # If interpolation left a ``{var}`` placeholder un-substituted,
+        # fall back to the captured literal ``value`` so the form is
+        # filled with something usable rather than the template string.
+        if isinstance(raw, str) and re.search(
+            r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", raw
+        ):
+            raw = action.get("value", raw)
     else:
         raw = action.get("value")
     try:
@@ -776,6 +864,29 @@ async def run_action(
     fid  = action.get("field_id", "<unnamed>")
 
     if kind == "wait":
+        # Smart-wait kinds (set by the recorder when a navigation / network
+        # idle / DOM burst is observed right after an action). Fall back to
+        # the legacy duration_ms sleep when wait_kind is missing.
+        wait_kind = (action.get("wait_kind") or "").strip().lower()
+        timeout_ms = int(action.get("timeout_ms", 15000))
+        if wait_kind in ("navigation", "domcontentloaded", "load", "networkidle"):
+            tgt = "domcontentloaded" if wait_kind in ("navigation", "domcontentloaded") else wait_kind
+            logger.info(f"[WAIT] for_load_state={tgt!r} (timeout {timeout_ms} ms)")
+            if not dry_run:
+                try:
+                    await page.wait_for_load_state(tgt, timeout=timeout_ms)
+                except Exception as exc:
+                    logger.warning(f"  [WAIT] {tgt} timed out: {exc!r}")
+            return True
+        if wait_kind == "selector":
+            sel = action.get("selector") or ""
+            logger.info(f"[WAIT] selector={sel!r} (timeout {timeout_ms} ms)")
+            if not dry_run and sel:
+                try:
+                    await page.wait_for_selector(sel, timeout=timeout_ms)
+                except Exception as exc:
+                    logger.warning(f"  [WAIT] selector {sel!r} timed out: {exc!r}")
+            return True
         ms = int(action.get("duration_ms", 250))
         logger.info(f"[WAIT] {ms} ms")
         if not dry_run:
@@ -835,6 +946,13 @@ async def run_action(
         return await _do_combobox(page, resolved, action, str(_resolve_value(action, ctx)), logger=logger)
     if kind == "contenteditable":
         return await _do_contenteditable(page, resolved.locator, str(_resolve_value(action, ctx)), logger=logger)
+    if kind == "otp_paste":
+        code = await _fetch_otp_code(page, action, ctx, logger=logger)
+        if code is None:
+            logger.warning(f"  [SKIP] otp_paste {fid!r} — no code available")
+            return False
+        # Reuse _do_fill so the existing fill→type→paste self-heal applies.
+        return await _do_fill(page, resolved.locator, action, code, logger=logger)
 
     # Default: best-effort fill.
     return await _do_fill(page, resolved.locator, action, _resolve_value(action, ctx), logger=logger)
@@ -861,6 +979,14 @@ async def run_actions(
 
     Between actions we sleep for ``action_delay_ms + rand(0..action_jitter_ms)``
     to mimic human pacing — important for FB-style anti-bot heuristics.
+
+    After actions that *can* trigger navigation (any ``submit`` / ``click``
+    that lands on a button-like element) we also call
+    ``page.wait_for_load_state('domcontentloaded')`` with a short timeout.
+    This is a defensive auto-wait that helps replay survive lazy-loading
+    pages without the recording having to capture explicit waits. It
+    short-circuits silently if the page never navigated — nothing breaks
+    when the click did not cause a load.
     """
     filled = 0
     skipped = 0
@@ -874,6 +1000,13 @@ async def run_actions(
             skipped += 1
             if stop_on_fail:
                 break
+        # Auto-settle after navigation-prone actions.
+        if not dry_run and ok and _action_may_navigate(action):
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                # Page didn't navigate — expected for non-link clicks.
+                pass
         # Pause before the next action (skip after the last one).
         if i < len(actions) - 1 and not dry_run:
             base = max(0, int(action_delay_ms))
@@ -881,6 +1014,25 @@ async def run_actions(
             extra = random.randint(0, jitter) if jitter > 0 else 0
             await asyncio.sleep((base + extra) / 1000.0)
     return filled, skipped
+
+
+def _action_may_navigate(action: dict) -> bool:
+    """Heuristic: does this action plausibly trigger navigation/page load?"""
+    kind = (action.get("kind") or "").lower()
+    if kind == "submit":
+        return True
+    if kind != "click":
+        return False
+    fp = action.get("fingerprint") or {}
+    tag = (fp.get("tag") or "").lower()
+    role = (fp.get("role") or "").lower()
+    if tag == "a" or tag == "button":
+        return True
+    if role in ("link", "button"):
+        return True
+    # Anything that looks like a submit by text — heuristic from recorder.
+    name = (fp.get("accessible_name") or "").lower()
+    return any(k in name for k in ("submit", "send", "continue", "next", "gửi", "tiếp"))
 
 
 __all__ = ["run_action", "run_actions"]

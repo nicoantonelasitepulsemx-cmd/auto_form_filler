@@ -1,0 +1,29 @@
+{
+  "_comment": "Facebook Trademark Report — page 2 (email confirmation code). The orchestrator script run_with_email_otp.py overrides the value of the `confirmation_code` field at runtime with the code it pulls from your inbox.",
+  "target_url": "RUNTIME_OVERRIDE",
+  "wait_for_selector": "input, form",
+  "headless": false,
+  "dry_run": false,
+  "pause_on_captcha": true,
+  "submit_selectors": [
+    "button[type='submit']",
+    "div[role='button']:has-text('Confirm')",
+    "div[role='button']:has-text('Submit')",
+    "button:has-text('Confirm')",
+    "button:has-text('Submit')"
+  ],
+  "fields": [
+    {
+      "field_id": "confirmation_code",
+      "value": "RUNTIME_OVERRIDE",
+      "targets": [
+        {"strategy": "label_text",  "selector": "Confirmation code"},
+        {"strategy": "label_text",  "selector": "code"},
+        {"strategy": "aria_label",  "selector": "input[aria-label*='code' i]"},
+        {"strategy": "placeholder", "selector": "input[placeholder*='code' i]"},
+        {"strategy": "css",         "selector": "input[name*='code' i]"},
+        {"strategy": "css",         "selector": "input[type='text']"}
+      ]
+    }
+  ]
+}

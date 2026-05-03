@@ -1,5 +1,302 @@
 # Changelog
 
+## v2.1 — Recorder accuracy + Mail-per-proxy bulk register (2026-04)
+
+Two user-requested upgrades, both fully backwards-compatible with v2
+configs and `accounts.json` files written by earlier versions.
+
+### Recorder (`recorder_v2.py` + overlay JS)
+
+The user reported "tick box, submit form, chuẩn xác" — i.e. recordings
+were missing the last keystroke before submit, dropping submit-via-Enter
+events, and getting confused by custom checkbox/radio widgets that toggle
+through `aria-checked`. This release closes all three gaps:
+
+- **`submit` event listener on every form** — captures Enter-key
+  submissions, programmatic `form.submit()` calls, and any submit the
+  click handler missed. De-duplicates against the click branch so we
+  never double-ship. The submit is attributed to the form's actual
+  submit button (so replay can click it) when one exists.
+- **`pre_submit_flush`** — when a submit fires, any pending text inputs
+  (those that emitted `input` but not `change` yet) are immediately
+  shipped as `fill` actions. Previously the last keystrokes were lost
+  on Enter-submit because navigation tore the page down before
+  `change` had a chance to fire.
+- **`paste` detection** — paste events are tracked per element; the
+  next `change` ships with `input_method="paste"` so replay
+  `Locator.fill()`s instead of typing keystrokes (much faster + more
+  reliable for long values like one-time codes the user pasted in).
+- **`MutationObserver` on `aria-checked`** — custom checkbox / radio
+  widgets (React headless-ui, Radix UI, Facebook's internal
+  components) toggle state through ARIA attributes without a DOM
+  click landing on the role=checkbox/radio element. We now ship a
+  synthetic `check` action when `aria-checked` flips, de-duped per
+  element via timestamp.
+- **`beforeunload` flush** — last-resort capture of pending input
+  values when the page navigates without a submit event firing
+  (programmatic `location.href = …`, etc.).
+- New tests: `test_recorder_submit_enter.py` (Enter-key submit +
+  pre-submit flush), `test_recorder_e2e_form.py` (every field type on
+  test_form.html), `test_recorder_e2e_replay.py` (capture → replay
+  round-trip preserves all field values).
+
+### Mail-per-proxy panel (`mail_per_proxy_panel.py`)
+
+The user wanted bulk email registration alongside the existing
+per-row flow — paste a list of emails and have them mint in parallel,
+each through the matching proxy, while keeping all existing single-row
+controls and the OTP-filter logic intact.
+
+- **📦 Bulk register section** at the bottom of the right pane:
+  - Textarea accepts three input shapes per line:
+    1. `alice` → name + local part = alice, default domain
+    2. `alice@kpay.be` → exact alias, no proxy
+    3. `acct1 | alice@kpay.be | host:port:user:pass` → full row spec
+    Empty fields default to the row's defaults; `auto` / `random` / `-`
+    means "kuku.lu picks". Lines starting with `#` are comments.
+  - **Concurrency spinbox (1–16)** — bounded asyncio Semaphore in the
+    background loop, so a paste of 200 lines doesn't fan out 200
+    parallel requests at kuku.lu (Cloudflare bans IPs that try).
+  - **▶ Register all** — parses + creates new account rows + mints
+    in parallel, results stream into the table as they complete.
+  - **▶ Mint all empty** — same fan-out for existing rows that don't
+    yet have a mailbox (typical after `From proxy file…` populates
+    many proxy-only rows).
+  - Live progress label: `done/total · ok · err`.
+- All previously shipping behavior preserved verbatim: per-row Mint /
+  New address / Test inbox / Wait OTP, OTP defaults
+  (regex / from_filter / timeout / poll / domain) saved to
+  `~/.auto_form_filler_otp_defaults`, accounts.json schema, dirty
+  marker, etc.
+- New tests: `test_mail_per_proxy_bulk.py` (parser correctness,
+  dedup, sanitisation, dialog widget wiring).
+
+### Compatibility
+
+- v2 config files written by earlier recorders replay unchanged.
+- `accounts.json` files written by earlier panel versions load
+  unchanged; the new bulk fields live entirely in transient UI state
+  and are not serialised.
+
+---
+
+## Mail-per-proxy Manager — GUI dialog for kuku.lu accounts
+
+Adds a Tk dialog (`mail_per_proxy_panel.MailPerProxyDialog`) accessed
+from the main GUI's toolbar (**📧 Mail-per-proxy**). Replaces hand-editing
+`accounts.json` for the kuku.lu integration. New surface area:
+
+- Account table: name, masked proxy, mailbox address, status.
+- Per-account actions, all run on a shared background asyncio loop so
+  the GUI stays responsive:
+  - **🆕 Mint mailbox** — provisions a fresh `KukuCreds` through the
+    account's proxy (egress IP matches what replay will use).
+  - **🔄 New address** — rotates the disposable alias on the existing
+    creds.
+  - **📥 Test inbox** — pulls the 3 most recent messages for debugging.
+  - **⏳ Wait OTP** — polls the inbox; when a matching code arrives it
+    is logged + copied to the clipboard.
+- **Domain** — editable combobox mirroring the m.kuku.lu "Add email
+  address" dropdown (`boxfi.uk`, `haren.uk`, `bangban.uk`,
+  `catgroup.uk`, `goatmail.uk`, `sendnow.win`, `ccmail.uk`,
+  `exdonuts.com`, `tensi.org`, `kpay.be`, `neko2.net`). Empty value
+  uses kuku.lu's `addMailAddrByAuto` endpoint (random domain); a
+  non-empty value is forwarded to `Kuku.create_address(domain=…)`
+  which hits `addMailAddrByManual&newdomain=…`. Persisted as part of
+  OTP defaults.
+- **From proxy file…** — bulk-import one row per line of a
+  `host:port:user:pass` file.
+- **OTP defaults** — `regex` / `from_filter` / `timeout` / `poll` /
+  `domain` persisted to `~/.auto_form_filler_otp_defaults`.
+- **Save / Save As** writes back the same `accounts.json` schema used
+  by `accounts.load_accounts` (vars, user_data_dir, etc. are
+  preserved); a dirty-marker (`*` in the title) tracks unsaved edits
+  and prompts on close.
+- `auto_fill_gui.cmd_open_mail_per_proxy` opens the dialog and
+  pre-loads `accounts.json` from the active config's directory if it
+  exists.
+- Tests: `test_mail_per_proxy_panel.py` covers the format helpers,
+  proxy translation, `_AccountRow` round-trip (including dict-shaped
+  proxies), save/load through `accounts.load_accounts`, OTP defaults
+  persistence + corruption tolerance, and a dialog smoke test that
+  builds the full UI under `xvfb`.
+
+## Disposable mail per proxy + automatic OTP paste (kuku.lu)
+
+A new module + matching recorder/replay paths so each proxy/account
+gets its own throw-away mailbox and OTP codes are pulled in
+automatically without copy/paste.
+
+- New `kuku_lu.py` module:
+  - `KukuCreds` — persistable identity (`csrf_token` + `sessionhash`).
+  - `Kuku` client with two backends: `from_playwright(page)` (preferred,
+    inherits the browser's Cloudflare clearance) and `from_requests()`
+    (lightweight HTTP, falls through cleanly when challenged).
+  - `create_address(domain=None)` — mint a disposable alias.
+  - `wait_for_code(address, regex, timeout, from_filter)` — poll the
+    inbox until a matching code arrives, then return the captured
+    group.
+- `accounts.py` learns about `Account.kuku: KukuCreds | None` so each
+  proxy worker can use its own inbox during parallel replay.
+- New `kuku_lu_cli.py` for shell-side provisioning:
+  ```
+  python kuku_lu_cli.py mint --out kuku_acct1.json
+  python kuku_lu_cli.py wait-code --creds kuku_acct1.json --from facebook
+  ```
+- `recorder_v2.py` gains a blue **"✎ Get OTP → paste"** button on the
+  floating panel when started with `--kuku-creds <path>`. Click any OTP
+  input, press the panel button, the recorder fetches the latest code
+  from kuku.lu and types it into the field — and saves the action as
+  `kind="otp_paste"` so replay does the same per-account on every run.
+  CLI flags: `--kuku-creds`, `--kuku-from`, `--kuku-regex`,
+  `--kuku-timeout-ms`, `--kuku-address`.
+- `replay_engine.py` handles `kind="otp_paste"`: looks up
+  `ctx["_kuku"]` (a pre-built client) or `ctx["_kuku_creds"]` (a
+  `KukuCreds` to build one against the current page), resolves the
+  field, polls kuku.lu, then routes through the existing
+  `_do_fill` self-heal so the typed code survives React-controlled
+  inputs.
+- Tests:
+  - `test_kuku_lu.py` spins up an `aiohttp` server emulating kuku.lu's
+    four endpoints and exercises `create_address`, `list_mails`,
+    `read_mail`, `wait_for_code`, plus the `KukuCreds` round-trip and
+    the resume-from-creds path.
+  - `test_otp_paste_replay.py` exercises the replay engine end-to-end
+    against the same fake server with a real Playwright page,
+    verifying the code lands in the input AND the recorded-value
+    fallback when no Kuku is supplied.
+
+## Windows 11 polish
+
+A pass over the recorder + GUI to make the tool feel native on Windows
+11. None of these are bug fixes per se — the tool already ran on
+Windows — but they remove the most common rough edges users hit:
+
+- `auto_fill_gui` now opts into per-monitor DPI awareness on Windows
+  (`SetProcessDpiAwareness(2)`) before the first `tk.Tk()` so text is
+  crisp on 1.5x / 2.0x displays instead of bitmap-stretched.
+- All preference reads/writes (`THEME_PREF_FILE`, `LAYOUT_PREF_FILE`,
+  `RECENT_FILES_FILE`) explicitly use `encoding="utf-8"` so the GUI no
+  longer depends on the user's `cp1252` codepage.
+- `recorder_v2._is_chrome_user_data_dir` accepts both casings of
+  `Local State` (Chrome occasionally writes mixed case across versions)
+  so passing `C:\Users\...\google\chrome\user data` is fine even when
+  Windows preserves it lowercased.
+- `recorder_v2._check_chrome_profile_lock` detects an in-use Chrome
+  profile (`SingletonLock` / `SingletonCookie` / `SingletonSocket` /
+  `lockfile`) BEFORE Playwright tries to launch and raises a clear
+  message — no more 30 second hang ending in `ProcessSingleton`.
+- New `recorder_v2._default_chrome_user_data_dir` returns the most
+  likely User Data path for the current OS, so the GUI's recorder
+  dialog can pre-fill the field on Windows
+  (`%LOCALAPPDATA%\Google\Chrome\User Data`).
+- New `--shots-dir` CLI flag (and `shots_dir_override=` kwarg) lets the
+  user redirect per-step screenshots out of the config's parent. The
+  default path now also probes for write access and falls back to the
+  system temp dir when the parent is read-only — typical for configs
+  living inside a OneDrive sync folder on Windows.
+- The recorder's floating panel adds `pointer-events: auto`,
+  `isolation: isolate` and `transform: translateZ(0)` to its CSS so
+  iframes / parent transforms can't hide it on Edge in Windows.
+
+## Recorder accuracy: multi-checkbox groups & dynamic IDs
+
+The recorder used to mis-identify the *target* of a click whenever a form
+had several radios/checkboxes sharing a single `name` attribute (e.g.
+Facebook's trademark report form, where four `content_type[]` checkboxes
+sit inside one fieldset). The first input under the click's container was
+always picked, so all four "Content You Want to Report" actions ended up
+pointing at the *same* checkbox at replay time.
+
+The fix touches the recorder, the resolver, the fingerprint, and the GUI:
+
+- `recorder_v2.OVERLAY_JS`
+  - `_findAssociatedInput()` now picks the right hidden input even when
+    several share a parent: it prefers the input whose own wrapping label's
+    bounding box contains the click point, then falls back to the closest
+    input by Euclidean distance to the click coordinates.
+  - The proxy-click branch always carries the `value` attribute now (not
+    just for radios), so checkboxes that share a `name` (e.g.
+    `content_type[]`) are disambiguated at replay time.
+  - The change handler also carries `_hidden_input_name` /
+    `_hidden_input_type` / `radio_value` so the replay engine's
+    JS-direct-set fallback can target the right sibling.
+  - New compound selector `name_value` →
+    `[name="..."][value="..."]` (weight 92) emitted for every
+    radio/checkbox with both attributes — the strongest natural identity
+    short of an `id`.
+  - Click coordinates are tracked from `pointerdown` and `click`; a new
+    `click_position` field (% within the target's bounding box) is shipped
+    on every `click` / `submit` / `check` action as a future-proof
+    tiebreaker.
+  - `looksRandom()` now rejects Facebook React internals (`u_0_K3`,
+    `u_0_12_D3`, `u_0_h_K8`, `u_0_2_G/`), long all-digit ids and
+    decimal-suffixed numerics (`1112475925434379.0`), so the recorder no
+    longer commits FB's volatile dynamic ids as `stable_id` selectors.
+  - `labelTextFor()` now strips nested form controls before reading
+    `innerText`, so each checkbox in a fieldset gets its own distinct
+    accessible name (previously all four read out the same combined
+    label).
+  - The click handler short-circuits when its target is a *real* input
+    (`<input type=checkbox|radio>`) — labels emit a synthetic click on
+    the underlying input which used to make the proxy branch fire twice.
+
+- `element_fingerprint.FINGERPRINT_JS`: the captured attributes set now
+  includes `value` for radios/checkboxes only, so the resolver's
+  attribute-match score correctly differentiates siblings.
+
+- `resolver_v2._STRATEGY_WEIGHT`: `name_value` is registered at weight
+  92, slotting it just below `data_testid` / `id` and above the bare
+  `name` strategy.
+
+- `auto_fill_gui`: the "submit after fill" checkbox auto-enables when
+  the loaded config carries a captured `submit` block. The state is
+  persisted to the JSON as `submit_after_fill` so re-loading restores
+  the user's preference.
+
+A regression test (`test_recorder_checkbox_group.py`) reproduces the
+Facebook-style 4-checkbox group end-to-end and asserts that all four
+options are checked after replay.
+
+## Multi-proxy parallel runs (Proxy pool)
+
+The pool runner can now drive **N parallel browser contexts, one proxy per
+context**, straight from a flat proxy list. No more hand-crafting an
+`accounts.json` just to test multiple proxies.
+
+### Proxy file parser
+- `proxy_utils.parse_proxy_string` now accepts the **flat colon format**
+  used by most commercial proxy providers in addition to the existing URL
+  forms:
+  - `host:port:user:pass`  ← most common
+  - `host:port`            ← anonymous
+  - `user:pass@host:port`  ← creds-before-host
+  - everything from before still works (`http://user:pass@host:port`,
+    `socks5://...`, etc.)
+  - passwords containing `:` are preserved (only the first 3 colons are
+    treated as field separators).
+- New `proxy_utils.load_proxy_dicts(path)` returns a list of
+  Playwright-shaped proxy dicts in one call. Bad lines are skipped with
+  a warning by default (configurable: `on_error="raise" | "silent"`).
+- `proxies.example.txt` ships as a copy-paste template.
+
+### Multi-proxy runner
+- New `accounts.accounts_from_proxies(proxies, ...)` synthesises one
+  `Account` per proxy so the existing `WorkerPool` can fan out N parallel
+  pages with no `accounts.json` needed. Optional
+  `user_data_dir_template` gives every worker its own persistent profile.
+- New CLI flag `auto_fill.py --proxy-pool proxies.txt` runs the current
+  config across every proxy in parallel. `--workers N` caps concurrency,
+  `--proxy-pool-persistent` enables per-proxy profiles.
+- New GUI section **Proxy pool** (right below Multi-account):
+  - File picker + **Validate** button (parses without running, shows the
+    first 8 proxies with passwords masked).
+  - **parallel** workers entry, **separate profiles** toggle.
+  - **▶ Run multi-proxy** button — streams per-proxy `task_start` /
+    `task_done` events into the same log used by single-proxy runs.
+
+See README → "Multi-proxy parallel runs" for full usage.
+
 ## Quality-of-life pass: dirty-state, shortcuts, filter, status icons, recent files, validate, value templates, test selectors
 
 A coordinated polish round across the GUI and engine to make the tool feel

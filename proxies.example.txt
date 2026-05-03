@@ -1,0 +1,17 @@
+# proxies.example.txt — one proxy per line.
+# Lines starting with `#` and blank lines are ignored.
+#
+# Supported per-line formats (all interchangeable, mix freely):
+#   host:port:user:pass            ← most common in commercial proxy lists
+#   host:port                      ← anonymous proxy
+#   user:pass@host:port            ← creds-before-host
+#   http://user:pass@host:port     ← explicit scheme
+#   socks5://host:1080
+#
+# Example (replace with real ones):
+
+1.2.3.4:8080:alice:apass
+5.6.7.8:9090:bob:bpass
+proxy.example.com:3128
+http://user1:secret@10.0.0.1:8000
+socks5://10.0.0.2:1080

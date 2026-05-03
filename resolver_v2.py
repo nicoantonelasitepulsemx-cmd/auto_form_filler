@@ -46,6 +46,7 @@ _STRATEGY_WEIGHT: dict[str, int] = {
     "data_testid": 100,
     "id":           95,
     "stable_id":    95,
+    "name_value":   92,   # [name="..."][value="..."] for radio/checkbox siblings
     "name":         90,
     "role_name":    85,
     "role":         80,
@@ -79,37 +80,69 @@ class ResolveResult:
 
 
 def _walk_frame_chain(page: Page, frame_chain: Optional[list[str]]) -> Optional[Frame]:
-    """Return the frame referenced by the recorded chain, or page.main_frame if missing.
+    """Return the frame referenced by the recorded chain.
 
-    Frame chain entries are URL-prefixes or frame names. We try to match
-    each entry against the live frame tree. If the chain length doesn't
-    match (page changed), we fall back to a depth-first search for a frame
-    whose URL contains the last entry.
+    A10 fix: the previous implementation was strict — every entry in
+    the chain had to match exactly OR the call returned ``None`` (and
+    the caller fell back to ``page.main_frame``). Real iframes change
+    URLs (auth flow, OAuth popup tabs, captcha refresh) so the
+    intermediate hops often don't match even when the deepest frame is
+    still findable.
+
+    New behaviour:
+      1. Try the strict walk first \u2014 best signal when nothing has
+         changed.
+      2. If that fails, fall back to looking for any frame on the page
+         whose URL/name matches the LAST chain entry (the most specific
+         signal). This recovers when the deepest frame is intact but its
+         parents have rotated. The match must be a descendant of
+         ``page.main_frame``, which it always is.
+      3. Otherwise return ``None`` so the caller can decide (typically
+         falls back to ``page.main_frame``).
     """
     if not frame_chain or frame_chain == ["top"]:
         return page.main_frame
 
-    # Walk in order, drilling down into child frames.
-    current: Frame = page.main_frame
-    for entry in frame_chain[1:]:  # skip "top"
-        children = current.child_frames
-        match = None
-        for child in children:
-            url = child.url or ""
-            name = child.name or ""
+    # 1. Strict walk: drill down child_frames one level at a time.
+    def _match(entry: str, frames: list[Frame]) -> Optional[Frame]:
+        for f in frames:
+            url = f.url or ""
+            name = f.name or ""
             if entry and (entry in url or entry == name):
-                match = child
-                break
+                return f
+        return None
+
+    current: Frame = page.main_frame
+    strict_ok = True
+    for entry in frame_chain[1:]:  # skip "top"
+        match = _match(entry, current.child_frames)
         if match is None:
-            # fallback: any descendant frame whose url/name contains the entry.
-            for f in page.frames:
-                if entry and (entry in (f.url or "") or entry == (f.name or "")):
-                    match = f
-                    break
-        if match is None:
-            return None
+            strict_ok = False
+            break
         current = match
-    return current
+    if strict_ok:
+        return current
+
+    # 2. Loose fallback: find any frame on the page whose URL or name
+    #    matches the LAST recorded chain entry. This is the most
+    #    specific entry in the chain so collisions are unlikely.
+    last_entry = frame_chain[-1]
+    if last_entry and last_entry != "top":
+        match = _match(last_entry, page.frames)
+        if match is not None:
+            return match
+
+    # 3. Penultimate fallback: walk from the end, picking the first
+    #    chain entry that resolves to a unique descendant. This is
+    #    deliberately permissive so partial matches still help.
+    for entry in reversed(frame_chain[1:-1]):
+        if not entry:
+            continue
+        match = _match(entry, page.frames)
+        if match is not None:
+            return match
+
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -134,7 +167,7 @@ async def _strategy_locators(
         # Locator with multiple matches; we'll iterate by index later.
         return loc
 
-    if s in ("css", "id", "name", "type", "value", "nth", "data_testid",
+    if s in ("css", "id", "name", "name_value", "type", "value", "nth", "data_testid",
              "placeholder", "aria_label", "aria_placeholder"):
         return [frame.locator(selector)]
 

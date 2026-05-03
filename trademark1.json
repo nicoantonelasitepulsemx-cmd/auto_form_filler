@@ -1,0 +1,2170 @@
+{
+  "version": 2,
+  "target_url": "https://www.facebook.com/help/contact/trademarkform",
+  "wait_for_selector": "",
+  "actions": [
+    {
+      "kind": "click",
+      "ts": 1777233135260,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "allow_all_cookies",
+      "field_type": "div",
+      "selectors": [
+        {
+          "strategy": "role_name",
+          "selector": "button|Allow all cookies",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "button",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Allow\\ all\\ cookies\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "css",
+          "selector": "div > div > div._4-i2._pig > div:nth-of-type(3) > div.x1exxf4d.x13fuv20:nth-of-type(2) > div.x9f619.x1ja2u2z > div.x9f619.x1n2onr6:nth-of-type(2) > div.x1i10hfl.xjbqb8w:nth-of-type(1)",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "div",
+        "type": null,
+        "role": "button",
+        "accessible_name": "Allow all cookies",
+        "attributes": {
+          "role": "button",
+          "aria-label": "Allow all cookies"
+        },
+        "text_content": "Allow all cookies",
+        "neighbour_text": "Allow all cookies",
+        "viewport_hint": {
+          "x_pct": 0.497,
+          "y_pct": 0.801,
+          "w_pct": 0.262,
+          "h_pct": 0.05
+        }
+      }
+    },
+    {
+      "kind": "check",
+      "ts": 1777233136723,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.509,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233136724,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.509,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233138219,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "relationship_rightsowner",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"relationship_rightsowner\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "I am the rights owner.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_4_8e > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "I am the rights owner.",
+        "attributes": {
+          "id": "666526966785308.0",
+          "name": "relationship_rightsowner",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "I am the rights owner.",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.462,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "I am the rights owner",
+      "_hidden_input_name": "relationship_rightsowner",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233138220,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "relationship_rightsowner",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"relationship_rightsowner\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "I am the rights owner.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_4_8e > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "I am the rights owner.",
+        "attributes": {
+          "id": "666526966785308.0",
+          "name": "relationship_rightsowner",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "I am the rights owner.",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.462,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "I am the rights owner",
+      "_hidden_input_name": "relationship_rightsowner",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233139355,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.132,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233151844,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "your_name",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"your_name\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Your full name",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Your full name",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.213007228830668 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Your full name",
+        "attributes": {
+          "id": "213007228830668",
+          "name": "your_name",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Your full name",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": -0.029,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "Guangzhou Weilaiya Biotechnology Co., Ltd",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233151947,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.415,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233153771,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.415,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233154170,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.415,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233157323,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "reporter_name",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"reporter_name\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Name of the rights owner\nThis may be your full name or the name of the organization for whom you are the authorized representative.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Name of the rights owner\nThis may be your full name or the name of the organization for whom you are the authorized representative.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.1193690677387082 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Name of the rights owner\nThis may be your full name or the name of the organization for whom you are the authorized representative.",
+        "attributes": {
+          "id": "1193690677387082",
+          "name": "reporter_name",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Name of the rights owner This may be your full name or the name of the organization for whom you are the authorized representative.",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": -1.708,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "Guangzhou Weilaiya Biotechnology Co., Ltd",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233157434,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -2.412,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233160714,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "signature",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"signature\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Electronic signature\nYour electronic signature should match your full name.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Electronic signature\nYour electronic signature should match your full name.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.348034581955173 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Electronic signature\nYour electronic signature should match your full name.",
+        "attributes": {
+          "id": "348034581955173",
+          "name": "signature",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Electronic signature Your electronic signature should match your full name.",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 3.16,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "Guangzhou Weilaiya Biotechnology Co., Ltd",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233160804,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.17,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233168595,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "email",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"email\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Email address\nPlease provide a valid email address that can be used to contact you. This may be a professional or business email address. Keep in mind the reported party may use this email to contact you.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Email address\nPlease provide a valid email address that can be used to contact you. This may be a professional or business email address. Keep in mind the reported party may use this email to contact you.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.622301541289923 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Email address\nPlease provide a valid email address that can be used to contact you. This may be a professional or business email address. Keep in mind the reported party may use this email to contact you.",
+        "attributes": {
+          "id": "622301541289923",
+          "name": "email",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Email address Please provide a valid email address that can be used to contact you. This may be a professional or business email address. Keep in mind the reported party may use this email to contact ",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.689,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "weilaiya.counterfeit@inbox.eu",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233168699,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.17,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233171499,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "confirm_email",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"confirm_email\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Confirm your email address",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Confirm your email address",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.1376658769024639 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Confirm your email address",
+        "attributes": {
+          "id": "1376658769024639",
+          "name": "confirm_email",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Confirm your email address",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.539,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "weilaiya.counterfeit@inbox.eu",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233171627,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.058,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233179843,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "websiterightsholder",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"websiterightsholder\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|https://www.example.com/",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"https\\:\\/\\/www\\.example\\.com\\/\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "placeholder",
+          "selector": "[placeholder=\"https\\:\\/\\/www\\.example\\.com\\/\"]",
+          "weight": 70
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Provide a link to the rights owner's official online presence.\n(Ex: website, Facebook Page, etc.)",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.817261985076647 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "https://www.example.com/",
+        "attributes": {
+          "id": "817261985076647",
+          "name": "websiterightsholder",
+          "type": "text",
+          "aria-label": "https://www.example.com/",
+          "placeholder": "https://www.example.com/"
+        },
+        "text_content": "",
+        "neighbour_text": "Provide a link to the rights owner's official online presence. (Ex: website, Facebook Page, etc.)",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.439,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "https://weilaiya.com.au/",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233179938,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.374,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233190147,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "what_is_your_trademark",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"what_is_your_trademark\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|What is the trademark?\nEach individual report submitted must pertain to only one registered trademark, which should be clearly identified here.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "What is the trademark?\nEach individual report submitted must pertain to only one registered trademark, which should be clearly identified here.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.1876333722592163 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "What is the trademark?\nEach individual report submitted must pertain to only one registered trademark, which should be clearly identified here.",
+        "attributes": {
+          "id": "1876333722592163",
+          "name": "what_is_your_trademark",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "What is the trademark? Each individual report submitted must pertain to only one registered trademark, which should be clearly identified here.",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.572,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "WEILAIYA",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233190251,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.374,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "select",
+      "ts": 1777233194332,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "rights_owner_country_routing",
+      "field_type": "select",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"rights_owner_country_routing\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "combobox|Where is the trademark registered ?",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "combobox",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Where\\ is\\ the\\ trademark\\ registered\\ \\?\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Where is the trademark registered ?",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.3411356655770500 > select._2k-p",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "select",
+        "type": null,
+        "role": null,
+        "accessible_name": "Where is the trademark registered ?",
+        "attributes": {
+          "id": "3411356655770500",
+          "name": "rights_owner_country_routing",
+          "aria-label": "Where is the trademark registered ?"
+        },
+        "text_content": "Select a country\nAfghanistan\nAland Islands\nAlbania\nAlgeria\nAmerican Samoa\nAndorra\nAngola\nAnguilla\nAntarctica\nAntigua\nArg",
+        "neighbour_text": "Where is the trademark registered ? Select a country Afghanistan Aland Islands Albania Algeria American Samoa Andorra Angola Anguilla Antarctica Antigua Argentina Armenia Aruba Australia Austria Azerb",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.649,
+          "w_pct": 0.234,
+          "h_pct": 0.028
+        }
+      },
+      "value": "Australia",
+      "value_label": "Australia"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233194333,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.374,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233195628,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.736,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233196139,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.736,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233201595,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "tmregnumber",
+      "field_type": "textarea",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"TMREGNUMBER\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|What is the trademark registration number?",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "What is the trademark registration number?",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.332711233753465 > textarea",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "textarea",
+        "type": null,
+        "role": null,
+        "accessible_name": "What is the trademark registration number?",
+        "attributes": {
+          "id": "332711233753465",
+          "name": "TMREGNUMBER",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "What is the trademark registration number?",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.362,
+          "w_pct": 0.234,
+          "h_pct": 0.03
+        }
+      },
+      "value": "2491028",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233201675,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -0.736,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233210683,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "tm_url",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"TM_URL\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Provide a link (URL) leading directly to the trademark registration from an online trademark database.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Provide a link (URL) leading directly to the trademark registration from an online trademark database.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.1983557438883573 > input.inputtext._55r1",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Provide a link (URL) leading directly to the trademark registration from an online trademark database.",
+        "attributes": {
+          "id": "1983557438883573",
+          "name": "TM_URL",
+          "type": "text",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Provide a link (URL) leading directly to the trademark registration from an online trademark database.",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.304,
+          "w_pct": 0.234,
+          "h_pct": 0.031
+        }
+      },
+      "value": "https://search.ipaustralia.gov.au/trademarks/search/view/2491028/",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233210787,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "content_type",
+      "field_type": "checkbox",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"content_type\\[\\]\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "This photo, video, post, story or ad uses the rights owner's trademark",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_h_K8 > label._kv1._55sg:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "checkbox",
+        "role": null,
+        "accessible_name": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "attributes": {
+          "id": "1112475925434379.0",
+          "name": "content_type[]",
+          "type": "checkbox"
+        },
+        "text_content": "",
+        "neighbour_text": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.583,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "_hidden_input_name": "content_type[]",
+      "_hidden_input_type": "checkbox",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233211204,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "content_type",
+      "field_type": "checkbox",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"content_type\\[\\]\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "This photo, video, post, story or ad uses the rights owner's trademark",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_h_K8 > label._kv1._55sg:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "checkbox",
+        "role": null,
+        "accessible_name": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "attributes": {
+          "id": "1112475925434379.0",
+          "name": "content_type[]",
+          "type": "checkbox"
+        },
+        "text_content": "",
+        "neighbour_text": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.583,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "_hidden_input_name": "content_type[]",
+      "_hidden_input_type": "checkbox",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233211587,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "content_type",
+      "field_type": "checkbox",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"content_type\\[\\]\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "This photo, video, post, story or ad uses the rights owner's trademark",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_h_K8 > label._kv1._55sg:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "checkbox",
+        "role": null,
+        "accessible_name": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "attributes": {
+          "id": "1112475925434379.0",
+          "name": "content_type[]",
+          "type": "checkbox"
+        },
+        "text_content": "",
+        "neighbour_text": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.583,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "_hidden_input_name": "content_type[]",
+      "_hidden_input_type": "checkbox",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233211588,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "content_type",
+      "field_type": "checkbox",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"content_type\\[\\]\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "This photo, video, post, story or ad uses the rights owner's trademark",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_h_K8 > label._kv1._55sg:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "checkbox",
+        "role": null,
+        "accessible_name": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "attributes": {
+          "id": "1112475925434379.0",
+          "name": "content_type[]",
+          "type": "checkbox"
+        },
+        "text_content": "",
+        "neighbour_text": "This photo, video, post, story or ad uses the rights owner's trademark",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": 0.583,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": false,
+      "_hidden_input_name": "content_type[]",
+      "_hidden_input_type": "checkbox",
+      "_click_proxy": true
+    },
+    {
+      "kind": "check",
+      "ts": 1777233212954,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -1.185,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233219163,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "content_urls",
+      "field_type": "textarea",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"content_urls\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Please provide links (URLs)/ IDs leading directly to the specific content you are reporting.\nYou can report up to 30 links (URLs)/IDs. Please enter 1 link (URL)/ ID per box.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "placeholder",
+          "selector": "[placeholder=\"https\\:\\/\\/www\\.facebook\\.com\\/…\"]",
+          "weight": 70
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Please provide links (URLs)/ IDs leading directly to the specific content you are reporting.\nYou can report up to 30 links (URLs)/IDs. Please enter 1 link (URL)/ ID per box.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.1622541521292980 > textarea",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "textarea",
+        "type": null,
+        "role": null,
+        "accessible_name": "Please provide links (URLs)/ IDs leading directly to the specific content you are reporting.\nYou can report up to 30 links (URLs)/IDs. Please enter 1 link (URL)/ ID per box.",
+        "attributes": {
+          "id": "1622541521292980",
+          "name": "content_urls",
+          "placeholder": "https://www.facebook.com/…",
+          "title": "https://www.facebook.com/…"
+        },
+        "text_content": "",
+        "neighbour_text": "Please provide links (URLs)/ IDs leading directly to the specific content you are reporting. You can report up to 30 links (URLs)/IDs. Please enter 1 link (URL)/ ID per box.",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": -0.311,
+          "w_pct": 0.234,
+          "h_pct": 0.03
+        }
+      },
+      "value": "https://www.facebook.com/photo/?fbid=1213297983936845&set=pb.100057699651419.-2207520000",
+      "input_method": "fill"
+    },
+    {
+      "kind": "check",
+      "ts": 1777233219275,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "continuereport",
+      "field_type": "radio",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"continuereport\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Continue with my trademark report",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#u_0_2_G\\/ > label._55sh.uiInputLabelInput:nth-of-type(1) > input",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "radio",
+        "role": null,
+        "accessible_name": "Continue with my trademark report",
+        "attributes": {
+          "id": "666057160210034.0",
+          "name": "continuereport",
+          "type": "radio"
+        },
+        "text_content": "",
+        "neighbour_text": "Continue with my trademark report",
+        "viewport_hint": {
+          "x_pct": 0.306,
+          "y_pct": -1.93,
+          "w_pct": 0.01,
+          "h_pct": 0.018
+        }
+      },
+      "checked": true,
+      "radio_value": "trademark",
+      "_hidden_input_name": "continuereport",
+      "_hidden_input_type": "radio",
+      "_click_proxy": true
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233235546,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "why_reporting_other",
+      "field_type": "textarea",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"why_reporting_other\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Describe how you believe this content infringes your intellectual property rights, and provide any additional information that can help us understand your report.",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Describe how you believe this content infringes your intellectual property rights, and provide any additional information that can help us understand your report.",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#SupportFormRow\\.125859267561673 > textarea",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "textarea",
+        "type": null,
+        "role": null,
+        "accessible_name": "Describe how you believe this content infringes your intellectual property rights, and provide any additional information that can help us understand your report.",
+        "attributes": {
+          "id": "125859267561673",
+          "name": "why_reporting_other",
+          "placeholder": ""
+        },
+        "text_content": "",
+        "neighbour_text": "Describe how you believe this content infringes your intellectual property rights, and provide any additional information that can help us understand your report.",
+        "viewport_hint": {
+          "x_pct": 0.303,
+          "y_pct": 0.175,
+          "w_pct": 0.234,
+          "h_pct": 0.109
+        }
+      },
+      "value": " Dear Meta,\n\nWe are Guangzhou Weilaiya Biotechnology Co., Ltd – the trademark owner responsible for protecting the WEILAIYA brand across all online platforms.\n\nWe respectfully request that Meta remove the content, images, accounts, and pages that are infringing upon the trademark rights of WEILAIYA . The attached links refer to counterfeit products that are not part of our official supply chain and pose serious risks to our brand reputation and consumer safety.\n\nWe urge Meta to take swift and effective action on this matter.\n\nSincerely",
+      "input_method": "fill"
+    },
+    {
+      "kind": "fill",
+      "ts": 1777233245467,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "nonce",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "name",
+          "selector": "[name=\"nonce\"]",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Submit your code",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Submit\\ your\\ code\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "placeholder",
+          "selector": "[placeholder=\"Submit\\ your\\ code\"]",
+          "weight": 70
+        },
+        {
+          "strategy": "css",
+          "selector": "form#u_9_1_gl > div.pam._13:nth-of-type(2) > div._3-8x:nth-of-type(2) > div._3-8w > input.inputtext",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Submit your code",
+        "attributes": {
+          "name": "nonce",
+          "type": "text",
+          "aria-label": "Submit your code",
+          "placeholder": "Submit your code"
+        },
+        "text_content": "",
+        "neighbour_text": "",
+        "viewport_hint": {
+          "x_pct": 0.329,
+          "y_pct": 0.368,
+          "w_pct": 0.11,
+          "h_pct": 0.031
+        }
+      },
+      "value": "7656464",
+      "input_method": "fill"
+    },
+    {
+      "kind": "click",
+      "ts": 1777233245612,
+      "url": "https://www.facebook.com/help/contact/trademarkform",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "field_1",
+      "field_type": "submit",
+      "selectors": [
+        {
+          "strategy": "role_name",
+          "selector": "button|Confirm",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "button",
+          "weight": 75
+        },
+        {
+          "strategy": "css",
+          "selector": "form#u_9_1_gl > div._14:nth-of-type(3) > div.pam.uiOverlayFooter > button._42ft._42fu",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "button",
+        "type": "submit",
+        "role": null,
+        "accessible_name": "Confirm",
+        "attributes": {
+          "type": "submit"
+        },
+        "text_content": "Confirm",
+        "neighbour_text": "Confirm",
+        "viewport_hint": {
+          "x_pct": 0.613,
+          "y_pct": 0.506,
+          "w_pct": 0.046,
+          "h_pct": 0.038
+        }
+      }
+    }
+  ],
+  "submit": {
+    "selectors": [
+      {
+        "strategy": "stable_id",
+        "selector": "u_0_12_D3",
+        "weight": 95
+      },
+      {
+        "strategy": "css",
+        "selector": "#u_0_12_D3",
+        "weight": 90
+      },
+      {
+        "strategy": "role_name",
+        "selector": "button|Submit",
+        "weight": 85
+      },
+      {
+        "strategy": "role",
+        "selector": "button",
+        "weight": 75
+      },
+      {
+        "strategy": "css",
+        "selector": "button#u_0_12_D3",
+        "weight": 55
+      }
+    ],
+    "fingerprint": {
+      "tag": "button",
+      "type": "submit",
+      "role": null,
+      "accessible_name": "Submit",
+      "attributes": {
+        "id": "u_0_12_D3",
+        "name": "",
+        "type": "submit"
+      },
+      "text_content": "Submit",
+      "neighbour_text": "Submit",
+      "viewport_hint": {
+        "x_pct": 0.727,
+        "y_pct": 0.72,
+        "w_pct": 0.048,
+        "h_pct": 0.038
+      }
+    },
+    "frame_chain": [
+      "top"
+    ]
+  },
+  "captured_at": "2026-04-27T02:54:08",
+  "headless": false,
+  "dry_run": false,
+  "proxy": {
+    "server": "31.58.9.4:6077",
+    "username": "ppytzfyz",
+    "password": "4cc0v27s1yu9"
+  }
+}

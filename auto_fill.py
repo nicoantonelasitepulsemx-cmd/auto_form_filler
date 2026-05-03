@@ -26,10 +26,15 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from accounts import load_accounts
+from accounts import accounts_from_proxies, load_accounts
 from captcha import detect_captcha, pause_for_human
 from logger import get_logger
-from proxy_utils import add_cli_args as _add_proxy_cli_args, mask_proxy, resolve_proxy
+from proxy_utils import (
+    add_cli_args as _add_proxy_cli_args,
+    load_proxy_dicts,
+    mask_proxy,
+    resolve_proxy,
+)
 from replay_engine import run_actions as _run_v2_actions, run_action as _run_v2_action
 from target_resolver import resolve_target
 from worker_pool import Task, WorkerPool
@@ -486,6 +491,58 @@ def _print_report_event(evt: str, payload: dict) -> None:
     print("  ".join(parts))
 
 
+async def run_multi_proxy(
+    *,
+    proxy_pool_path: str,
+    base_config: Optional[dict],
+    args: argparse.Namespace,
+    logger,
+) -> int:
+    """Run the same config concurrently across N proxies (one BrowserContext each).
+
+    Triggered by ``auto_fill.py --proxy-pool proxies.txt``.
+    """
+    if not base_config:
+        logger.error("[PROXY-POOL] need --config (or --profile) to know what to run")
+        return 2
+    proxies = load_proxy_dicts(proxy_pool_path, on_error="warn")
+    if not proxies:
+        logger.error(f"[PROXY-POOL] no valid proxies in {proxy_pool_path}")
+        return 2
+    logger.info(f"[PROXY-POOL] loaded {len(proxies)} proxy/ies from {proxy_pool_path}")
+
+    udd_template: Optional[str] = None
+    if getattr(args, "proxy_pool_persistent", False):
+        from pathlib import Path as _P
+        base = _P.home() / ".auto_form_filler_profiles"
+        base.mkdir(parents=True, exist_ok=True)
+        udd_template = str(base / "{name}")
+
+    accts = accounts_from_proxies(
+        proxies,
+        headless=bool(getattr(args, "headless", False)),
+        user_data_dir_template=udd_template,
+    )
+    # Strip single-proxy fields so each worker uses its own.
+    cfg = dict(base_config)
+    for k in ("proxy", "proxy_list", "proxy_rotate"):
+        cfg.pop(k, None)
+
+    tasks = [Task(config=cfg, vars=dict(a.vars), label=a.name) for a in accts]
+    pool = WorkerPool(
+        accts,
+        max_concurrency=int(getattr(args, "workers", 0) or len(accts)),
+        report_cb=_print_report_event,
+        dry_run=args.dry_run,
+        threshold=0.55,
+        debug=args.debug,
+    )
+    results = await pool.run_tasks(tasks)
+    ok = sum(1 for r in results if r.ok)
+    logger.info(f"[PROXY-POOL] done — {ok}/{len(results)} task(s) succeeded")
+    return 0 if ok == len(results) else 1
+
+
 async def run_multi_account(
     *,
     accounts_path: str,
@@ -581,7 +638,22 @@ def parse_args() -> argparse.Namespace:
         "--workers",
         type=int,
         default=0,
-        help="Max concurrent workers (default: number of accounts).",
+        help="Max concurrent workers (default: number of accounts/proxies).",
+    )
+    grp.add_argument(
+        "--proxy-pool",
+        help=(
+            "Path to a proxies file. Each non-empty, non-comment line is one "
+            "proxy in any of: host:port:user:pass | host:port | "
+            "[scheme://][user:pass@]host:port. The same config is run "
+            "concurrently — one BrowserContext per proxy."
+        ),
+    )
+    grp.add_argument(
+        "--proxy-pool-persistent",
+        action="store_true",
+        help="Use separate persistent profiles for each proxy worker "
+             "(default: ephemeral context per worker).",
     )
     _add_proxy_cli_args(p)
     return p.parse_args()
@@ -604,6 +676,16 @@ def main() -> None:
         rc = asyncio.run(run_multi_account(
             accounts_path=args.accounts,
             tasks_path=args.tasks,
+            base_config=base_config,
+            args=args,
+            logger=logger,
+        ))
+        sys.exit(rc)
+
+    if getattr(args, "proxy_pool", None):
+        # Multi-proxy parallel mode
+        rc = asyncio.run(run_multi_proxy(
+            proxy_pool_path=args.proxy_pool,
             base_config=base_config,
             args=args,
             logger=logger,

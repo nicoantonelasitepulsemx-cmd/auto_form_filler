@@ -2054,6 +2054,14 @@ class AutoFillGUI(tk.Tk):
 
         self.run_btn.configure(state="disabled")
         self.run_pool_btn.configure(state="disabled")
+        # Mirrors cmd_run_proxy_pool — _on_pool_finished re-enables
+        # all three buttons, so disabling all three on entry keeps
+        # the disable/enable cycle symmetric. Otherwise this button
+        # stays visually clickable mid-run; ``runner_thread.is_alive()``
+        # guards against double execution but the UI still misleads
+        # the user.
+        if hasattr(self, "run_proxy_pool_btn"):
+            self.run_proxy_pool_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.status_var.set("Running pool…")
         self._log_local(f"[POOL] starting with accounts={accounts_path} workers={workers or 'auto'}")
@@ -2104,6 +2112,15 @@ class AutoFillGUI(tk.Tk):
             except Exception as exc:
                 self.log_queue.put_nowait(f"[POOL_ERR] {exc!r}")
             finally:
+                # Close the per-run event loop so its selector / fd
+                # resources don't accumulate across repeated button
+                # clicks. Mirrors the single-run path's ``finally``
+                # block (auto_fill_gui.py: cmd_run inner worker).
+                try:
+                    if self.runner_loop and not self.runner_loop.is_closed():
+                        self.runner_loop.close()
+                except Exception:
+                    pass
                 self.runner_loop = None
                 self.runner_task = None
                 self.after(0, self._on_pool_finished)
@@ -2276,6 +2293,15 @@ class AutoFillGUI(tk.Tk):
             except Exception as exc:
                 self.log_queue.put_nowait(f"[PROXY-POOL_ERR] {exc!r}")
             finally:
+                # Close the per-run event loop so its selector / fd
+                # resources don't accumulate across repeated button
+                # clicks. Mirrors the single-run path's ``finally``
+                # block (auto_fill_gui.py: cmd_run inner worker).
+                try:
+                    if self.runner_loop and not self.runner_loop.is_closed():
+                        self.runner_loop.close()
+                except Exception:
+                    pass
                 self.runner_loop = None
                 self.runner_task = None
                 self.after(0, self._on_pool_finished)

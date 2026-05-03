@@ -312,7 +312,12 @@ def _parse_bulk_lines(text: str, default_domain: str = "") -> list[_BulkSpec]:
                 # Empty alias field — apply default domain so the row
                 # uses a known domain rather than a random kuku.lu one.
                 domain = default_domain
-            name = name_raw or local or _uniq("acct")
+            # Pick a base name BEFORE registering with ``_uniq``. Calling
+            # ``_uniq("acct")`` inside the ``or`` chain would already add
+            # ``"acct"`` to ``seen_names``; the follow-up ``_uniq(name)``
+            # would then find it and bump the very first auto-generated
+            # row to ``"acct_2"``, with every subsequent row off by one.
+            name = name_raw or local or "acct"
             name = _uniq(name)
             proxy = proxy_raw or None
             if proxy and proxy.lower() in ("auto", "none", "-"):

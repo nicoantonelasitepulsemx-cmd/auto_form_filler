@@ -157,6 +157,23 @@ def test_dialog_has_bulk_widgets() -> None:
     _ok("dialog exposes bulk_text + concurrency + status widgets")
 
 
+def test_parser_three_field_blank_name_starts_at_acct_not_acct_2() -> None:
+    """Regression: ``| | proxy`` lines must auto-name the first row ``acct``.
+
+    Earlier the auto-name path called ``_uniq("acct")`` inside the
+    ``or`` chain (which already registered the name) and *then* called
+    ``_uniq(name)`` on the result, so the very first auto-named row
+    came out as ``acct_2`` and every subsequent one was off by one.
+    """
+    out = _parse_bulk_lines(
+        " | | host1:80:u:p\n"
+        " | | host2:80:u:p\n"
+        " | | host3:80:u:p\n"
+    )
+    assert [s.name for s in out] == ["acct", "acct_2", "acct_3"]
+    _ok("parser auto-names blank rows starting at ``acct`` (not ``acct_2``)")
+
+
 if __name__ == "__main__":
     test_parser_skips_blank_and_comment()
     test_parser_three_shapes()
@@ -164,5 +181,6 @@ if __name__ == "__main__":
     test_parser_three_field_with_empties()
     test_parser_sanitises_local_part()
     test_parser_handles_auto_keyword()
+    test_parser_three_field_blank_name_starts_at_acct_not_acct_2()
     test_dialog_has_bulk_widgets()
     print("\n[ok] all bulk-register tests passed")

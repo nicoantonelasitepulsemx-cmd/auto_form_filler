@@ -2067,7 +2067,12 @@ class AutoFillGUI(tk.Tk):
                 self.log_queue.put_nowait(f"[POOL] loaded {len(accts)} account(s)")
 
                 tasks = [
-                    Task(config=config_snapshot, vars=dict(a.vars), label=a.name)
+                    # Each Task gets its own deep copy so that any
+                    # worker-local mutation of nested config (e.g.
+                    # ``actions`` lists for retries, ``submit`` overrides
+                    # for self-healing) cannot leak across concurrent
+                    # workers. Mirrors auto_fill.run_multi_proxy.
+                    Task(config=copy.deepcopy(config_snapshot), vars=dict(a.vars), label=a.name)
                     for a in accts
                 ]
 
@@ -2230,7 +2235,12 @@ class AutoFillGUI(tk.Tk):
                     user_data_dir_template=udd_template,
                 )
                 tasks = [
-                    Task(config=config_snapshot, vars=dict(a.vars), label=a.name)
+                    # Each Task gets its own deep copy so that any
+                    # worker-local mutation of nested config (e.g.
+                    # ``actions`` lists for retries, ``submit`` overrides
+                    # for self-healing) cannot leak across concurrent
+                    # workers. Mirrors auto_fill.run_multi_proxy.
+                    Task(config=copy.deepcopy(config_snapshot), vars=dict(a.vars), label=a.name)
                     for a in accts
                 ]
                 self.log_queue.put_nowait(

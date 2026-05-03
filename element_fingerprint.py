@@ -71,13 +71,21 @@ FINGERPRINT_JS = r"""
   // avoid huge style/className blobs that change between record and replay.
   // ``value`` is included for radios/checkboxes only — for free-text inputs
   // the value depends on what the user typed at record time and shouldn't
-  // affect identity.
+  // affect identity. Also accept ARIA-only widgets (``role="radio"`` /
+  // ``role="checkbox"``) which don't carry a native ``type`` attribute but
+  // DO sometimes expose a stable ``value`` attribute we want to use to
+  // disambiguate sibling options.
   const interesting = ["id","name","type","role","data-testid","aria-label",
                        "placeholder","title","autocomplete","value"];
   const attributes = {};
   const _t = (el.getAttribute("type") || "").toLowerCase();
+  const _r = (el.getAttribute("role") || "").toLowerCase();
+  const _isToggle = (
+    _t === "radio" || _t === "checkbox" ||
+    _r === "radio" || _r === "checkbox"
+  );
   for (const k of interesting) {
-    if (k === "value" && _t !== "radio" && _t !== "checkbox") continue;
+    if (k === "value" && !_isToggle) continue;
     const v = el.getAttribute(k);
     if (v != null) attributes[k] = v;
   }

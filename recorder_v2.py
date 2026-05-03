@@ -297,10 +297,15 @@ OVERLAY_JS = r"""
     for (const k of interesting) {
       // For radios/checkboxes el.value is part of identity; for free-text
       // inputs we deliberately skip it so the fingerprint does not depend on
-      // what the user happens to have typed at record time.
+      // what the user happens to have typed at record time. Also accept
+      // ARIA-only widgets (``role="radio"`` / ``role="checkbox"``) which
+      // don't carry a native ``type`` attribute but DO sometimes expose a
+      // stable ``value`` attribute we want to use to disambiguate sibling
+      // options.
       if (k === "value") {
         const t = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
-        if (t !== "radio" && t !== "checkbox") continue;
+        const r = ((el.getAttribute && el.getAttribute("role")) || "").toLowerCase();
+        if (t !== "radio" && t !== "checkbox" && r !== "radio" && r !== "checkbox") continue;
       }
       const v = el.getAttribute(k);
       if (v != null) attrs[k] = v;

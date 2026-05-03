@@ -265,7 +265,16 @@ class _RequestsBackend(_Backend):
         kwargs: dict[str, Any] = {"timeout": 20}
         if self._proxy:
             kwargs["proxies"] = self._proxy
-        if data:
+        # Use ``is not None`` (not truthiness) so that an empty form
+        # body (``data={}``) is still attached. ``init_session`` POSTs
+        # with ``data={}`` to trigger kuku.lu's cookie-setting flow,
+        # which relies on the request carrying a
+        # ``Content-Type: application/x-www-form-urlencoded`` header
+        # \u2014 ``requests`` only emits that header when ``data`` is
+        # passed, even if the dict is empty. The legacy ``if data:``
+        # guard silently dropped the body, leaving the server to think
+        # this was a plain GET-style request and skipping cookie issue.
+        if data is not None:
             kwargs["data"] = data
         r = self._session.request(method, url, **kwargs)
         if r.status_code == 403:

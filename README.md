@@ -316,6 +316,45 @@ print(codegen_export(json.load(open("trademark1.json"))))
 
 See `CHANGELOG.md` for the full v4 release notes.
 
+### v4.1 — six more opt-in modules
+
+All pure-Python, no new pip deps. Pick what you need; each module
+imports cleanly without the others.
+
+| Module | Purpose |
+|--------|---------|
+| `captcha_solve` | reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile via 2Captcha / Anti-Captcha / CapSolver. Auto-detects which provider is configured (env-var key). |
+| `recording_diff` | Compare two recordings → unchanged/drifted/changed/added/removed. Catches form drift before a batch run. |
+| `webhook_notify` | `Notifier.discord(...)` / `.telegram(...)` / `.slack(...)` + `broadcast([...])` for batch-job summaries. |
+| `form_data_csv` | Drive a recording from a CSV; built-in mini-Faker (`{{faker.name}}`, `{{faker.email}}`, `{{faker.uuid}}`, …) with deterministic seeding. |
+| `network_capture` | URL-pattern blocker (`BLOCK_ADS`, `BLOCK_ANALYTICS`, `BLOCK_FONTS`, `BLOCK_HEAVY`, …) + Playwright HAR record/replay helpers. |
+| `stealth_profile` | `generate_profile(name)` deterministic per-account fingerprint (UA, viewport, locale, WebGL renderer) + `apply_profile(context, p)` init script masking `navigator.webdriver`, `Permissions.query`, plugin count, WebGL vendor/renderer. |
+
+```python
+# captcha
+from captcha_solve import solve_recaptcha_v2, inject_recaptcha_token
+res = solve_recaptcha_v2(site_key="6Lc...", page_url=page.url)
+if res.ok:
+    await inject_recaptcha_token(page, res.token)
+
+# webhook summary
+from webhook_notify import Notifier
+Notifier.discord(WEBHOOK_URL).send_summary(
+    "Nightly batch", ok_count=198, fail_count=2, elapsed_s=45.6,
+)
+
+# stealth + network optimisations
+from stealth_profile import generate_profile, apply_profile
+from network_capture import compile_blocker, attach_blocker, BLOCK_HEAVY
+
+profile = generate_profile(account.name)  # deterministic per-account
+ctx = await browser.new_context(**profile_to_context_options(profile))
+await apply_profile(ctx, profile)
+
+blocker = compile_blocker(bundles=[BLOCK_HEAVY])
+detach = await attach_blocker(ctx, blocker)
+```
+
 ## v2 — accurate record + replay
 
 The default recorder is now `recorder_v2.py`, which fixes the

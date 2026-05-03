@@ -1,5 +1,68 @@
 # Changelog
 
+## v4.1 — Six new optional API modules (2026-05)
+
+Builds on v4.0. All six modules are pure-Python (no new pip
+dependencies) and opt-in: importing them adds nothing to the hot
+path until you actually call them.
+
+- **`captcha_solve.py`** — automatic CAPTCHA solving via 2Captcha,
+  Anti-Captcha, or CapSolver. Detects which provider you have an
+  API key for (env vars `TWOCAPTCHA_API_KEY` / `ANTICAPTCHA_API_KEY` /
+  `CAPSOLVER_API_KEY`), submits the challenge, polls for the answer
+  (exponential backoff, 180 s default timeout), and ships
+  `inject_*_token` helpers that fill the hidden response fields on
+  the page. Supports reCAPTCHA v2 (checkbox + invisible),
+  reCAPTCHA v3, hCaptcha, and Cloudflare Turnstile.
+
+- **`recording_diff.py`** — structural diff between two recorder
+  JSON files. Catches form drift before a batch run: matches actions
+  by stable identity (frame chain + role + accessible name + label),
+  scores each pair against the resolver's own weighted-Jaccard, and
+  flags `added` / `removed` / `changed` / `drifted` / `unchanged`.
+  Output is `DiffReport` (JSON-serialisable) plus a colour-friendly
+  `format_text()` for CI logs.
+
+- **`webhook_notify.py`** — batch-job notifications to Discord,
+  Telegram, and Slack via plain HTTP webhooks. `Notifier.send_summary`
+  renders a coloured embed on Discord (green/amber/red) and a
+  plain-text block on Telegram/Slack. `broadcast()` mirrors the same
+  payload across multiple channels with per-channel failure
+  isolation — a flaky webhook can never crash the batch.
+
+- **`form_data_csv.py`** — drive a recording with rows from a CSV.
+  Maps column headers to recording `field_id` names (with `[id]`
+  bracket-escape syntax for ambiguous headers). Built-in faker
+  (`{{faker.first_name}}`, `{{faker.email}}`, `{{faker.phone_us}}`,
+  `{{faker.uuid}}`, `{{faker.password_strong}}`, `{{faker.address}}`,
+  `{{faker.lorem:n}}`, …) so you can mix literal data with
+  randomised fillers. Per-row seeding is deterministic — same
+  `seed_base` always produces the same outputs (good for "regenerate
+  yesterday's run").
+
+- **`network_capture.py`** — Playwright HAR record/replay helpers
+  plus URL-pattern blocker with curated bundles (`BLOCK_ADS`,
+  `BLOCK_ANALYTICS`, `BLOCK_FONTS`, `BLOCK_MEDIA`, `BLOCK_HEAVY`).
+  Stripping ads/analytics/fonts cuts page-load latency on heavy
+  sites (Facebook, Cloudflare-protected pages) by 30-70 % for
+  batched submissions. Stats are captured per session
+  (`blocked` / `allowed` / `blocked_hosts`) for telemetry.
+
+- **`stealth_profile.py`** — anti-detect fingerprint randomiser
+  with persistent profiles. `generate_profile(name)` is a pure
+  deterministic function: same account name always yields the same
+  fingerprint (UA, viewport, locale, timezone, hardware concurrency,
+  WebGL renderer, …) so cookies and IndexedDB pin to a coherent
+  identity across runs. The init script masks `navigator.webdriver`,
+  `Permissions.query` for notifications, plugin count, WebGL
+  vendor/renderer, and `window.chrome` — common Cloudflare /
+  Akamai / DataDome detection points.
+
+### Tests
+
++82 unit tests across the six modules (16 + 13 + 12 + 24 + 12 + 15).
+Total suite: 156 → 166 passing.
+
 ## v4.0 — Radio targeting + ai_features extension pack (2026-05)
 
 Bug-driven release. The user reported that picking "I am the rights

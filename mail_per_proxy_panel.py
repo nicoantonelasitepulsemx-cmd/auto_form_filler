@@ -756,6 +756,12 @@ class MailPerProxyDialog(tk.Toplevel):
         self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.bind("<Button-3>", self._on_right_click)
         self.tree.bind("<Control-Button-1>", self._on_right_click)  # macOS
+        # Refresh the legacy ``sel_*_var`` shims + status bar whenever
+        # the user picks a different row. Without this, the status
+        # label stayed pinned to "Ready." and the compat StringVars
+        # never updated, so external callers that watch them couldn't
+        # tell which row was active.
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_selection_changed())
         self.bind_all("<Escape>", lambda e: self._cancel_inline_edit())
 
     # ------------------------------------------------------------------ paste box

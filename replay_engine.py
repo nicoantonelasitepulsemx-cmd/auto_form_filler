@@ -1199,6 +1199,14 @@ async def run_action(
             return False
         # Reuse _do_fill so the existing fill→type→paste self-heal applies.
         return await _do_fill(page, resolved.locator, action, code, logger=logger)
+    if kind == "submit":
+        # v4 multi-step forms keep all submit actions inline rather than
+        # collapsing them into a single trailing ``cfg["submit"]``. Those
+        # inline submits resolve to the actual button locator, so a click
+        # is always the right thing to do here. The fall-through to
+        # ``_do_fill`` was a no-op (submit buttons have no value) and
+        # left multi-step forms stuck on the first page.
+        return await _do_click(page, resolved.locator, action, logger=logger)
 
     # Default: best-effort fill.
     return await _do_fill(page, resolved.locator, action, _resolve_value(action, ctx), logger=logger)

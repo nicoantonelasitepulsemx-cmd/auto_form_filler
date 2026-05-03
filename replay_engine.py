@@ -441,6 +441,34 @@ async def _verify_radio_outcome(
     return False
 
 
+def _is_radio_check_action(action: dict) -> bool:
+    """True when *action* is a check on a radio (native or ARIA).
+
+    Pure helper extracted so the v4 RADIO RULE can be unit-tested
+    without driving Playwright. Returns False for ARIA checkboxes and
+    plain hidden-input checkboxes — those must NOT be classified as
+    radios because the rule unconditionally drops checked=false on
+    radios, which would silently break checkbox unchecks.
+
+    Detection signals (any one is enough):
+      * ``_hidden_input_type == "radio"`` — recorder paired the click
+        with a hidden ``<input type=radio>``
+      * ``fingerprint.role == "radio"`` — ARIA-conformant radio (e.g.
+        Facebook's ``div[role=radio]``)
+      * ``fingerprint.type == "radio"`` — recorder captured the native
+        ``<input>`` directly without proxy promotion
+    """
+    hidden_input_type = action.get("_hidden_input_type")
+    fp = action.get("fingerprint") or {}
+    fp_role = (fp.get("role") or "").lower()
+    fp_type = (fp.get("type") or "").lower()
+    return (
+        hidden_input_type == "radio"
+        or fp_role == "radio"
+        or fp_type == "radio"
+    )
+
+
 async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
     """Set a checkbox / radio (real <input> or `[role=checkbox|radio]`).
 
@@ -477,16 +505,17 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
     desired = bool(action.get("checked", True))
     is_click_proxy = bool(action.get("_click_proxy"))
     hidden_input_name = action.get("_hidden_input_name")
-    hidden_input_type = action.get("_hidden_input_type", "radio")
+    # IMPORTANT: do NOT default ``_hidden_input_type`` to ``"radio"``.
+    # The recorder only sets this field when it actually saw a hidden
+    # ``<input type=radio|checkbox>`` paired with a styled proxy
+    # element. ARIA-only widgets (``div[role=checkbox]``,
+    # ``div[role=radio]``, …) ship without it, and a stale ``"radio"``
+    # default would misclassify ARIA-checkbox uncheck actions as
+    # radio sibling-deselect ghosts and silently drop them.
+    hidden_input_type = action.get("_hidden_input_type")
     radio_value = action.get("radio_value")
     neighbour_text = (action.get("fingerprint") or {}).get("neighbour_text", "")
-    fp_role = ((action.get("fingerprint") or {}).get("role") or "").lower()
-    fp_type = ((action.get("fingerprint") or {}).get("type") or "").lower()
-    is_radio_action = (
-        hidden_input_type == "radio"
-        or fp_role == "radio"
-        or fp_type == "radio"
-    )
+    is_radio_action = _is_radio_check_action(action)
 
     # v4 RADIO RULE: drop check-false actions on radios.
     if is_radio_action and not desired:

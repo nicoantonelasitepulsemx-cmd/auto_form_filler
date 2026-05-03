@@ -206,8 +206,19 @@ def _resolve_value(action: dict, ctx: Optional[Mapping[str, Any]]) -> Any:
         # If interpolation left a ``{var}`` placeholder un-substituted,
         # fall back to the captured literal ``value`` so the form is
         # filled with something usable rather than the template string.
+        #
+        # The negative lookbehind/lookahead skip ``{var}`` matches that
+        # are wrapped in another brace pair \u2014 i.e. ``{{var}}``
+        # tokens that belong to ``value_templates`` (``{{date}}``,
+        # ``{{uuid4}}``, ``{{random_email}}``, ``{{env:NAME}}``\u2026).
+        # Without the lookarounds, a mixed string like
+        # ``"{email} on {{date}}"`` whose ``{email}`` *was* resolved by
+        # ``_interpolate`` would still match (because ``{date}`` lives
+        # inside ``{{date}}``) and we'd discard the partially-resolved
+        # template in favour of the captured literal, silently losing
+        # the ``{{date}}`` expansion downstream.
         if isinstance(raw, str) and re.search(
-            r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", raw
+            r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})", raw
         ):
             raw = action.get("value", raw)
     else:

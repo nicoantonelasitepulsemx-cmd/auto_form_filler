@@ -569,14 +569,40 @@ class Kuku:
         return. Defaults to 5–8 contiguous digits, the same shape FB /
         Google / most OTP senders use.
 
-        ``since`` is a Unix timestamp; messages observed for the first
-        time after this point are considered. ``None`` means "from
-        now". Set this to e.g. ``time.time() - 10`` if you submitted
-        the form just before calling.
+        ``since`` is a Unix timestamp. When provided, every mail
+        already sitting in the inbox at the moment ``wait_for_code``
+        starts is considered "stale" and won't be returned — only
+        mails that arrive *after* the call are surfaced. This is
+        what the GUI's *Wait OTP* button passes (``since=time.time()``
+        captured before kicking off the polling task) so that a
+        confirmation code from a prior registration on the same
+        alias isn't mistaken for the current one.
+        ``since=None`` (the default) keeps the legacy permissive
+        behaviour: any mail in the inbox now or in the future
+        matching the regex satisfies the call. Implementation note:
+        ``MailEntry.timestamp`` is currently always ``None`` because
+        kuku.lu's inbox HTML doesn't expose a reliable per-row
+        timestamp, so when ``since`` is explicit we pre-seed the
+        ``seen`` set with the nums of all currently-known mails as a
+        proxy for "everything observed before the cutoff".
         """
         pat = re.compile(regex) if isinstance(regex, str) else regex
         deadline = time.time() + timeout
         seen: set[str] = set()
+        # When the caller passes an explicit ``since`` cutoff we
+        # pre-seed ``seen`` with the nums of any mail that already
+        # exists, so stale OTPs from prior registrations on the same
+        # alias don't satisfy the call. ``since=None`` preserves the
+        # legacy "any mail in the inbox" behaviour.
+        if since is not None:
+            try:
+                pre_existing = await self.list_mails(address)
+                for entry in pre_existing:
+                    seen.add(entry.num)
+            except KukuError:
+                # Inbox unreadable right now — best-effort fallback
+                # to the polling loop which retries internally.
+                pass
         while time.time() < deadline:
             try:
                 mails = await self.list_mails(address)

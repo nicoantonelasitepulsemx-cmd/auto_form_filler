@@ -248,6 +248,65 @@ async def test_handles_ng_response() -> None:
         await runner.cleanup()
 
 
+async def test_wait_for_code_since_filters_stale() -> None:
+    """v4: ``since`` must hide mails that already exist when called.
+
+    Reproduces the bug Devin Review flagged — without the
+    pre-seeding, ``wait_for_code(since=time.time())`` would return
+    an OTP from a *previous* registration on the same alias.
+
+    Two assertions:
+      1. With a stale mail already in the inbox and no fresh mail
+         arriving during the poll window, ``wait_for_code(since=...)``
+         must time out (NOT return the stale code).
+      2. With a stale mail already in the inbox and a fresh mail
+         arriving mid-poll, ``wait_for_code(since=...)`` returns the
+         fresh code, never the stale one.
+    """
+    import time as _time
+
+    fake, runner, base = await _spawn_fake()
+    try:
+        async with await Kuku.from_requests(base_url=base) as k:
+            addr = await k.create_address()
+            # Stage a stale OTP that pre-dates the cutoff.
+            fake.deliver(addr, body_html="Old code: <b>111111</b>.")
+            cutoff = _time.time()
+
+            # (1) No fresh mail → must time out, not return stale.
+            try:
+                code = await k.wait_for_code(
+                    timeout=0.4, poll_interval=0.1, since=cutoff
+                )
+            except KukuError as e:
+                assert "timed out" in str(e), e
+            else:
+                raise AssertionError(
+                    f"expected timeout, got stale code {code!r}"
+                )
+
+            # (2) Fresh mail arrives mid-poll. Schedule a delayed
+            # delivery and call wait_for_code with a NEW cutoff that
+            # is captured BEFORE the fresh delivery, but AFTER the
+            # stale one is already sitting in the box.
+            new_cutoff = _time.time()
+
+            async def _drop_fresh_after_a_beat() -> None:
+                await asyncio.sleep(0.2)
+                fake.deliver(addr, body_html="Fresh code: <b>222222</b>.")
+
+            deliver_task = asyncio.create_task(_drop_fresh_after_a_beat())
+            try:
+                code = await k.wait_for_code(
+                    timeout=2.0, poll_interval=0.1, since=new_cutoff
+                )
+            finally:
+                await deliver_task
+            assert code == "222222", code
+    finally:
+        await runner.cleanup()
+
+
 async def main() -> None:
     test_strip_status_prefix()
     test_parse_inbox()
@@ -265,6 +324,9 @@ async def main() -> None:
 
     await test_handles_ng_response()
     print("[fake] NG response handled OK")
+
+    await test_wait_for_code_since_filters_stale()
+    print("[fake] wait_for_code since-filter OK")
 
     print("\n[ok] kuku_lu.py: all tests passed")
 

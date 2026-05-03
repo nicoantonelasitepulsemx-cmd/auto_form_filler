@@ -185,17 +185,24 @@ def fingerprint_score(recorded: dict, current: dict) -> float:
     # fingerprint and let the wrong sibling sneak through. We also
     # add a SOFT mismatch penalty so a non-empty recorded name that
     # disagrees with a non-empty live name actively hurts the score.
+    #
+    # IMPORTANT: only enter this branch when at least one side has a
+    # non-empty name. ``weigh(5.0, False)`` on two empty names would
+    # otherwise drop fingerprint scores for plain ``<input name=…>``
+    # elements (no accessible name is the common case for
+    # placeholder-only inputs) below the 0.55 replay threshold.
     rec_name = _norm(recorded.get("accessible_name"))
     cur_name = _norm(current.get("accessible_name"))
-    weigh(5.0, rec_name == cur_name and (rec_name or cur_name))
-    if rec_name and cur_name and rec_name != cur_name:
-        # Substring relationship still earns *partial* credit so
-        # cosmetic decoration (extra punctuation, "(required)") is
-        # tolerated. Disjoint names penalize.
-        if rec_name in cur_name or cur_name in rec_name:
-            weigh(1.5, True)
-        else:
-            weigh(2.0, False)  # mismatch penalty
+    if rec_name or cur_name:
+        weigh(5.0, rec_name == cur_name)
+        if rec_name and cur_name and rec_name != cur_name:
+            # Substring relationship still earns *partial* credit so
+            # cosmetic decoration (extra punctuation, "(required)") is
+            # tolerated. Disjoint names penalize.
+            if rec_name in cur_name or cur_name in rec_name:
+                weigh(1.5, True)
+            else:
+                weigh(2.0, False)  # mismatch penalty
 
     # Attributes: count exact matches on the interesting subset.
     rec_attrs = recorded.get("attributes") or {}

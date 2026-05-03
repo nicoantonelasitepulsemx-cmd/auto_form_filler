@@ -11,3 +11,12 @@ recorded_v2_*.events.json
 shots/
 .devin_work/
 *.tar.gz
+
+# Recordings and account snapshots that often carry live proxy
+# credentials, kuku.lu session tokens, or other secrets. Keep them
+# local — never commit. See CHANGELOG.md v4 notes.
+mail.tm.json
+testcopy*.json
+trademark*.json
+*.private.json
+.recordings/

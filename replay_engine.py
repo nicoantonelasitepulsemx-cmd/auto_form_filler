@@ -197,6 +197,36 @@ async def _fetch_otp_code(
     return None
 
 
+_PLACEHOLDER_RE = re.compile(r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})")
+
+
+def _template_has_unresolved_placeholders(
+    template: str, ctx: Mapping[str, Any]
+) -> bool:
+    """True iff *template* contains any ``{var}`` whose key is not in *ctx*.
+
+    Used by :func:`_resolve_value` to decide whether the
+    ``value_template`` interpolation can produce a usable value, OR
+    whether the recorder's captured literal ``value`` should be used
+    as a fallback. Critically, this inspects the **template**'s
+    placeholders against the **ctx**, not the interpolated **result** —
+    the result may legitimately contain literal ``{word}`` patterns
+    coming from a ctx value (e.g. a free-text field where the user
+    typed ``"Use {standard} format"``), and treating those as
+    unresolved would discard the successful interpolation.
+
+    The negative lookbehind/lookahead skip ``{{var}}`` tokens that
+    belong to :mod:`value_templates` and are not subject to
+    ctx-substitution at all.
+    """
+    if not isinstance(template, str):
+        return False
+    for m in _PLACEHOLDER_RE.finditer(template):
+        if m.group(1) not in ctx:
+            return True
+    return False
+
+
 def _resolve_value(action: dict, ctx: Optional[Mapping[str, Any]]) -> Any:
     """Pick ``value_template`` (with interpolation) over ``value`` if present.
 
@@ -204,34 +234,32 @@ def _resolve_value(action: dict, ctx: Optional[Mapping[str, Any]]) -> Any:
     ``{{random_email}}`` / ``{{env:NAME}}`` / etc. via :mod:`value_templates`
     so each replay run gets a fresh value when the user templates fields.
 
-    Bug fix: when ``value_template`` is present but no matching variable
-    is available in ``ctx`` (or ctx is ``None``), the previous code
-    happily passed ``"{email}"`` straight to the page, producing a
-    literal ``{email}`` in the form. We now detect any leftover
-    ``{name}`` placeholder after interpolation and fall back to the
-    captured ``value`` so replay on a fresh ctx still works.
+    Behavior:
+      * ``value_template`` missing or empty → use captured ``value``.
+      * ``value_template`` present and **every** ``{var}`` placeholder
+        in it is satisfied by *ctx* → interpolate and use the result.
+      * ``value_template`` present but **at least one** ``{var}``
+        placeholder is missing from *ctx* → fall back to the captured
+        ``value`` so the form is filled with something usable rather
+        than a half-resolved template.
+
+    The "missing placeholder" check is run on the **template**, not the
+    interpolation **result** — the result may legitimately contain
+    literal ``{word}`` patterns from a ctx value (e.g. a free-text
+    field where the user typed ``"Use {standard} format"``). Inspecting
+    the result would false-positive there and silently discard the
+    successful interpolation.
     """
     raw: Any
     if "value_template" in action and action["value_template"]:
-        raw = _interpolate(action["value_template"], ctx or {})
-        # If interpolation left a ``{var}`` placeholder un-substituted,
-        # fall back to the captured literal ``value`` so the form is
-        # filled with something usable rather than the template string.
-        #
-        # The negative lookbehind/lookahead skip ``{var}`` matches that
-        # are wrapped in another brace pair \u2014 i.e. ``{{var}}``
-        # tokens that belong to ``value_templates`` (``{{date}}``,
-        # ``{{uuid4}}``, ``{{random_email}}``, ``{{env:NAME}}``\u2026).
-        # Without the lookarounds, a mixed string like
-        # ``"{email} on {{date}}"`` whose ``{email}`` *was* resolved by
-        # ``_interpolate`` would still match (because ``{date}`` lives
-        # inside ``{{date}}``) and we'd discard the partially-resolved
-        # template in favour of the captured literal, silently losing
-        # the ``{{date}}`` expansion downstream.
-        if isinstance(raw, str) and re.search(
-            r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})", raw
+        template = action["value_template"]
+        ctx_view: Mapping[str, Any] = ctx or {}
+        if isinstance(template, str) and _template_has_unresolved_placeholders(
+            template, ctx_view
         ):
-            raw = action.get("value", raw)
+            raw = action.get("value", template)
+        else:
+            raw = _interpolate(template, ctx_view)
     else:
         raw = action.get("value")
     try:
@@ -577,8 +605,15 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         if hidden_input_name:
             try:
                 return await page.evaluate(
+                    # When ``inputType`` is empty, drop the ``[type="..."]``
+                    # filter so we still find the right ARIA-only widget.
+                    # Defaulting to "radio" here would silently miss
+                    # ARIA-checkbox recordings whose action dict carries
+                    # ``_hidden_input_name`` but no ``_hidden_input_type``.
                     """([name, val, inputType]) => {
-                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
                         const inputs = document.querySelectorAll(sel);
                         for (const inp of inputs) {
                             if (val && inp.value === val) return !!inp.checked;
@@ -586,7 +621,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                         }
                         return false;
                     }""",
-                    [hidden_input_name, radio_value or "", hidden_input_type or "radio"],
+                    [hidden_input_name, radio_value or "", hidden_input_type or ""],
                 )
             except Exception:
                 pass
@@ -655,8 +690,13 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         # -- P2: find the hidden input by name+value, then click its parent label --
         try:
             clicked = await page.evaluate(
+                # Conditional selector: drop ``[type="..."]`` when inputType
+                # is empty so ARIA-only widgets without ``_hidden_input_type``
+                # still resolve.
                 """([name, val, inputType]) => {
-                    const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                    const sel = inputType
+                        ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                        : 'input[name="' + name + '"]';
                     const inputs = document.querySelectorAll(sel);
                     for (const inp of inputs) {
                         if (val && inp.value !== val) continue;
@@ -681,7 +721,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                     }
                     return null;
                 }""",
-                [hidden_input_name, radio_value or "", hidden_input_type],
+                [hidden_input_name, radio_value or "", hidden_input_type or ""],
             )
             if clicked:
                 await asyncio.sleep(0.3)
@@ -697,7 +737,9 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
             try:
                 clicked = await page.evaluate(
                     """([name, matchText, inputType]) => {
-                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
                         const inputs = document.querySelectorAll(sel);
                         for (const inp of inputs) {
                             // Find the container holding this radio group
@@ -720,7 +762,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                         }
                         return null;
                     }""",
-                    [hidden_input_name, match_text, hidden_input_type],
+                    [hidden_input_name, match_text, hidden_input_type or ""],
                 )
                 if clicked:
                     await asyncio.sleep(0.3)
@@ -757,7 +799,9 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         try:
             ok = await page.evaluate(
                 """([name, val, inputType, desired]) => {
-                    const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                    const sel = inputType
+                        ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                        : 'input[name="' + name + '"]';
                     const inputs = document.querySelectorAll(sel);
                     for (const inp of inputs) {
                         if (val && inp.value !== val) continue;
@@ -779,7 +823,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                     }
                     return false;
                 }""",
-                [hidden_input_name, radio_value or "", hidden_input_type, desired],
+                [hidden_input_name, radio_value or "", hidden_input_type or "", desired],
             )
             if ok:
                 logger.info("  [CHECK_OK] proxy → JS direct set (last resort)")
@@ -923,8 +967,14 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         try:
             for _attempt in range(3):
                 ok = await page.evaluate(
+                    # Same broadened selector as ``_is_checked``: drop the
+                    # ``[type="..."]`` filter when the recorder didn't
+                    # capture a hidden_input_type, so ARIA-only checkbox
+                    # widgets are still healed.
                     """([name, val, inputType, desired]) => {
-                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
                         const inputs = document.querySelectorAll(sel);
                         for (const inp of inputs) {
                             if (val && inp.value !== val) continue;
@@ -935,14 +985,16 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                         }
                         return false;
                     }""",
-                    [hidden_input_name, radio_value or "", hidden_input_type or "radio", desired],
+                    [hidden_input_name, radio_value or "", hidden_input_type or "", desired],
                 )
                 if not ok:
                     break
                 await asyncio.sleep(0.25)
                 state_ok = await page.evaluate(
                     """([name, val, inputType, desired]) => {
-                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
                         const inputs = document.querySelectorAll(sel);
                         for (const inp of inputs) {
                             if (val && inp.value !== val) continue;
@@ -950,7 +1002,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                         }
                         return false;
                     }""",
-                    [hidden_input_name, radio_value or "", hidden_input_type or "radio", desired],
+                    [hidden_input_name, radio_value or "", hidden_input_type or "", desired],
                 )
                 if state_ok:
                     logger.info("  [CHECK_OK] healed via JS direct set on hidden input")

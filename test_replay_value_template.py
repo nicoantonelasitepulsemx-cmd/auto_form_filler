@@ -119,3 +119,62 @@ def test_no_value_template_returns_captured_value() -> None:
     action = {"value": "literal"}
     assert _resolve_value(action, ctx=None) == "literal"
     assert _resolve_value(action, ctx={"email": "x"}) == "literal"
+
+
+# -----------------------------------------------------------------------------
+# Devin Review #3182604136: ctx values containing literal {word} must NOT be
+# mistaken for unresolved placeholders.
+# -----------------------------------------------------------------------------
+
+
+def test_resolve_value_ctx_value_with_literal_braces_is_not_discarded() -> None:
+    """A free-text ctx value like ``"Use {standard} format"`` must reach
+    the form intact.
+
+    Before the fix, _resolve_value scanned the *result* of _interpolate
+    for leftover ``{word}`` patterns and triggered the fallback to the
+    captured literal — silently discarding the successful ctx
+    substitution. The fix moved the unresolved-placeholder check to
+    inspect the **template** against the **ctx**, not the result.
+    """
+    action = {
+        "value_template": "{description}",
+        "value": "fallback-literal",
+    }
+    out = _resolve_value(
+        action, ctx={"description": "Use {standard} format"},
+    )
+    assert out == "Use {standard} format", (
+        f"ctx value with literal braces wrongly discarded: {out!r}"
+    )
+
+
+def test_resolve_value_ctx_value_with_braces_alongside_known_var() -> None:
+    """Mixed: ``{a}`` resolves to a value containing ``{b}``;
+    ``{b}`` not in ctx is fine because it came from the resolved value."""
+    action = {
+        "value_template": "{a}",
+        "value": "fallback",
+    }
+    out = _resolve_value(action, ctx={"a": "literal {b} text"})
+    assert out == "literal {b} text"
+
+
+def test_resolve_value_unknown_placeholder_still_falls_back() -> None:
+    """Sanity: when the template has a placeholder the ctx can't fill,
+    fallback to the captured value still triggers."""
+    action = {"value_template": "{email}", "value": "fallback@x.com"}
+    assert _resolve_value(action, ctx={}) == "fallback@x.com"
+    assert _resolve_value(action, ctx={"name": "x"}) == "fallback@x.com"
+
+
+def test_resolve_value_partial_template_falls_back_when_missing_var() -> None:
+    """``"{email} on {{date}}"`` with email absent → fall back."""
+    action = {
+        "value_template": "{email} on {{date}}",
+        "value": "fallback@x.com on 2025-01-01",
+    }
+    assert (
+        _resolve_value(action, ctx={"other": "x"})
+        == "fallback@x.com on 2025-01-01"
+    )

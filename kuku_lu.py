@@ -292,6 +292,19 @@ class _RequestsBackend(_Backend):
     async def set_cookie(self, name: str, value: str) -> None:
         self._session.cookies.set(name, value)
 
+    async def aclose(self) -> None:
+        # The base class's no-op default leaks the underlying urllib3
+        # connection pool. In bulk-mint scenarios (50+ accounts), each
+        # ``Kuku.from_requests()`` allocates a fresh ``requests.Session``
+        # and the explicit ``await k._backend.aclose()`` calls in
+        # ``mail_per_proxy_panel`` were silently doing nothing — open TCP
+        # sockets only got reclaimed when the session object was garbage
+        # collected.
+        try:
+            self._session.close()
+        except Exception:
+            pass
+
 
 class _PlaywrightBackend(_Backend):
     """Drive kuku.lu through an existing Playwright ``BrowserContext``.

@@ -1981,6 +1981,14 @@ def _playwright_to_requests_proxy(proxy_dict: Optional[dict]) -> Optional[dict]:
 
         {"http":  "http://u:p@1.2.3.4:8080",
          "https": "http://u:p@1.2.3.4:8080"}
+
+    The user / password halves are URL-encoded with ``urllib.parse.quote``.
+    Without encoding, a password containing ``@`` or ``:`` (both common in
+    proxy seller credentials) produces a malformed URL — ``urllib3``'s
+    ``urlparse`` splits on the **last** ``@`` and **first** ``:`` in the
+    netloc, so ``http://admin:p@ss@1.2.3.4:8080`` is parsed with host
+    ``ss@1.2.3.4`` instead of ``1.2.3.4``, silently breaking proxy auth
+    for every kuku.lu HTTP call.
     """
     if not proxy_dict:
         return None
@@ -1993,7 +2001,8 @@ def _playwright_to_requests_proxy(proxy_dict: Optional[dict]) -> Optional[dict]:
         scheme, rest = server.split("://", 1)
         # SOCKS proxies need the requests[socks] extra; we still emit
         # the URL because callers may have it installed.
-        url = f"{scheme}://{user}:{pwd}@{rest}"
+        from urllib.parse import quote as _quote
+        url = f"{scheme}://{_quote(user, safe='')}:{_quote(pwd, safe='')}@{rest}"
     else:
         url = server
     return {"http": url, "https": url}

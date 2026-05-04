@@ -256,6 +256,7 @@ class WorkerPool:
                 except Exception:
                     pass
 
+            url_before_actions = page.url
             filled, skipped = await run_actions(
                 page,
                 actions,
@@ -267,17 +268,66 @@ class WorkerPool:
                 action_jitter_ms=int(cfg.get("action_jitter_ms", 80)),
             )
 
-            if submit_spec and not self.dry_run:
+            if not self.dry_run:
+                # Mirror the auto_fill.run() three-tier submit strategy
+                # so pool runs honour the same "submit after fill" UX:
+                #   1. Inline submits already in actions[] navigated us
+                #      away → trust them, no double click.
+                #   2. Recorded submit_spec block → click it via v2.
+                #   3. Generic submit_form() fallback → text/role
+                #      selectors for "Submit" / "Send" / "Continue" so
+                #      recordings that stopped before the submit button
+                #      still get submitted when the user wanted them to.
                 from replay_engine import run_action
-                ok = await run_action(
-                    page,
-                    {**submit_spec, "kind": "click", "field_id": "submit"},
-                    threshold=self.threshold,
-                    dry_run=False,
-                    logger=self.logger,
-                )
-                if not ok:
-                    self.logger.warning(f"[{account.name}] submit click skipped")
+                from auto_fill import submit_form
+
+                inline_submits = [
+                    a for a in (actions or [])
+                    if (a.get("kind") or "").lower() == "submit"
+                ]
+                page_url_changed = page.url != url_before_actions
+                already_submitted = bool(inline_submits) and page_url_changed
+
+                if already_submitted:
+                    self.logger.info(
+                        f"[{account.name}] action stream already submitted "
+                        f"(URL changed: {url_before_actions!r} → {page.url!r})"
+                    )
+                else:
+                    clicked = False
+                    if submit_spec:
+                        try:
+                            ok = await run_action(
+                                page,
+                                {
+                                    **submit_spec,
+                                    "kind": "click",
+                                    "field_id": "submit",
+                                },
+                                threshold=self.threshold,
+                                dry_run=False,
+                                logger=self.logger,
+                            )
+                            clicked = bool(ok)
+                            if not clicked:
+                                self.logger.warning(
+                                    f"[{account.name}] recorded submit "
+                                    "click skipped"
+                                )
+                        except Exception as exc:
+                            self.logger.warning(
+                                f"[{account.name}] recorded submit "
+                                f"raised: {exc!r}"
+                            )
+
+                    if not clicked:
+                        try:
+                            await submit_form(page, cfg, self.logger)
+                        except Exception as exc:
+                            self.logger.warning(
+                                f"[{account.name}] submit_form fallback "
+                                f"raised: {exc!r}"
+                            )
             return filled, skipped
 
         for attempt in range(1, task.max_retries + 1):

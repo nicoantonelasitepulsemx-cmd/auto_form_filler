@@ -263,28 +263,65 @@ async def fill_one_field(
 # --------------------------------------------------------------------------------------
 
 
-async def submit_form(page: Page, config: dict, logger) -> None:
+async def submit_form(page: Page, config: dict, logger) -> bool:
+    """Generic submit-button fallback.
+
+    Tries a battery of selectors that match real-world submit buttons
+    (native ``type=submit`` first, then text/role variants in common
+    English + Vietnamese). Returns ``True`` when a button was found
+    *and* visible *and* clicked; returns ``False`` when nothing
+    matched or every match was disabled/off-screen.
+
+    Caller is expected to handle the False case (e.g. the action
+    stream may have already navigated past the form).
+    """
     selectors = config.get("submit_selectors") or [
-        'button[type="submit"]',
-        'input[type="submit"]',
+        # Native submits — strongest signal.
+        'button[type="submit"]:visible',
+        'input[type="submit"]:visible',
+        # ARIA / role-based.
+        'button[role="button"]:has-text("Submit")',
+        # Text-based (English + Vietnamese the recorder may have seen).
         'button:has-text("Submit")',
         'button:has-text("Send")',
         'button:has-text("Continue")',
+        'button:has-text("Confirm")',
+        'button:has-text("Gửi")',
+        'button:has-text("Tiếp")',
+        # Last-resort native fallbacks (no :visible filter for sites
+        # that hide the button with CSS but still register clicks).
+        'button[type="submit"]',
+        'input[type="submit"]',
     ]
     for sel in selectors:
         try:
             btn = page.locator(sel).first
-            if await btn.count() > 0:
-                logger.info(f"[SUBMIT] clicking {sel}")
-                await btn.click()
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                except PlaywrightTimeoutError:
-                    pass
-                return
-        except Exception:
+            count = await btn.count()
+            if count == 0:
+                continue
+            # Skip disabled/hidden buttons — clicking those is a no-op
+            # and consumes our one chance per selector.
+            try:
+                if not await btn.is_visible():
+                    continue
+                if not await btn.is_enabled():
+                    continue
+            except Exception:
+                # If is_visible/is_enabled raise (e.g. element detached
+                # mid-check), fall through and try clicking anyway.
+                pass
+            logger.info(f"[SUBMIT] clicking {sel}")
+            await btn.click()
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+            return True
+        except Exception as exc:
+            logger.debug(f"[SUBMIT] selector {sel!r} failed: {exc!r}")
             continue
     logger.warning("[SUBMIT] no submit button matched any selector")
+    return False
 
 
 # --------------------------------------------------------------------------------------
@@ -341,6 +378,16 @@ async def run(config: dict, args: argparse.Namespace, logger) -> int:
     dry_run = args.dry_run or config.get("dry_run", False)
     debug = args.debug
     is_v2 = _is_v2_config(config)
+
+    # Honour ``submit_after_fill`` in the config as a fallback for
+    # ``--submit`` / GUI-args.submit. This lets profiles persist the
+    # "submit after fill" checkbox state across runs without the
+    # caller having to mirror the flag on every CLI invocation.
+    if not getattr(args, "submit", False) and config.get("submit_after_fill"):
+        args.submit = True
+        logger.info(
+            "[SUBMIT] enabled from config.submit_after_fill=true"
+        )
 
     chrome_profile = getattr(args, "chrome_profile", None) or config.get("chrome_profile")
 
@@ -426,6 +473,7 @@ async def run(config: dict, args: argparse.Namespace, logger) -> int:
             # ---- v2 path: action-driven replay ----
             actions = config.get("actions", [])
             ctx_vars = dict(config.get("vars") or {})
+            url_before_actions = page.url
             filled, skipped = await _run_v2_actions(
                 page, actions,
                 ctx=ctx_vars,
@@ -435,16 +483,75 @@ async def run(config: dict, args: argparse.Namespace, logger) -> int:
                 action_delay_ms=int(config.get("action_delay_ms", 120)),
                 action_jitter_ms=int(config.get("action_jitter_ms", 80)),
             )
-            if args.submit and not dry_run and config.get("submit"):
-                # Post-fill CAPTCHA check
-                await _maybe_handle_captcha(page, args, config, logger)
-                submit_action = {**config["submit"], "kind": "click", "field_id": "submit"}
-                await _run_v2_action(
-                    page, submit_action,
-                    threshold=float(config.get("resolver_threshold", 0.55)),
-                    dry_run=False, logger=logger,
+            if args.submit and not dry_run:
+                # "Submit after fill" — robust three-tier strategy:
+                #   1. If the action stream already had inline ``submit``
+                #      kinds AND the page navigated away from the form,
+                #      assume those did the job (no double-click risk).
+                #   2. Else try the recorded ``config["submit"]`` block
+                #      via the v2 resolver (fingerprint-stable, the v1+
+                #      back-compat path).
+                #   3. Else fall back to ``submit_form()`` which scans
+                #      generic selectors (button[type=submit],
+                #      "Submit"/"Send"/"Continue" text). This is the
+                #      safety net for recordings that stopped before
+                #      capturing the submit button.
+                inline_submits = [
+                    a for a in (actions or [])
+                    if (a.get("kind") or "").lower() == "submit"
+                ]
+                page_url_changed = page.url != url_before_actions
+                logger.info(
+                    f"[SUBMIT] post-fill submit requested — "
+                    f"inline_submits={len(inline_submits)} "
+                    f"page_url_changed={page_url_changed}"
                 )
-                await _maybe_handle_captcha(page, args, config, logger)
+
+                already_submitted = bool(inline_submits) and page_url_changed
+                if already_submitted:
+                    logger.info(
+                        "[SUBMIT] action stream already submitted "
+                        f"(URL: {url_before_actions!r} → {page.url!r})"
+                    )
+                else:
+                    await _maybe_handle_captcha(page, args, config, logger)
+                    clicked = False
+
+                    # Tier 2: recorded submit block (fingerprint-driven).
+                    submit_block = config.get("submit")
+                    if submit_block:
+                        try:
+                            submit_action = {
+                                **submit_block,
+                                "kind": "click",
+                                "field_id": "submit",
+                            }
+                            ok = await _run_v2_action(
+                                page, submit_action,
+                                threshold=float(
+                                    config.get("resolver_threshold", 0.55)
+                                ),
+                                dry_run=False, logger=logger,
+                            )
+                            clicked = bool(ok)
+                            if clicked:
+                                logger.info(
+                                    "[SUBMIT] clicked recorded submit block"
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                f"[SUBMIT] recorded submit failed: {exc!r}"
+                            )
+
+                    # Tier 3: generic selector fallback.
+                    if not clicked:
+                        logger.info(
+                            "[SUBMIT] falling back to generic submit_form() "
+                            "(submit_selectors)"
+                        )
+                        await submit_form(page, config, logger)
+
+                    await _maybe_handle_captcha(page, args, config, logger)
         else:
             # ---- v1 legacy path ----
             filled = skipped = 0

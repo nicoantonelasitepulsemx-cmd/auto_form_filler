@@ -98,6 +98,7 @@ class WorkerPool:
         dry_run: bool = False,
         threshold: float = 0.55,
         debug: bool = False,
+        submit_after_fill: bool = False,
     ) -> None:
         if not accounts:
             raise ValueError("WorkerPool needs at least one account")
@@ -107,6 +108,12 @@ class WorkerPool:
         self.dry_run = dry_run
         self.threshold = threshold
         self.debug = debug
+        # ``submit_after_fill`` gates the post-action-stream submit
+        # logic. When False, the pool fills fields and stops there —
+        # the same contract as ``auto_fill.py`` without ``--submit``.
+        # Mirrors the GUI's "submit after fill" checkbox so pool runs
+        # never submit forms the user didn't ask to submit.
+        self.submit_after_fill = submit_after_fill
         self.logger = get_logger(debug=debug)
         self._queue: asyncio.Queue[Optional[Task]] = asyncio.Queue()
         self._results: list[TaskResult] = []
@@ -268,16 +275,41 @@ class WorkerPool:
                 action_jitter_ms=int(cfg.get("action_jitter_ms", 80)),
             )
 
-            if not self.dry_run:
-                # Mirror the auto_fill.run() three-tier submit strategy
-                # so pool runs honour the same "submit after fill" UX:
+            # Per-task submit gate. Bug fix #3183083462: removing the
+            # ``submit_spec`` requirement caused pool workers to call
+            # ``submit_form()`` unconditionally — which scans the page
+            # for any submit-looking button and clicks it. That risked
+            # unintended submissions for fill-only pool runs.
+            #
+            # The corrected contract:
+            #   * Pool fills fields by default and submits ONLY when
+            #     the caller explicitly opted in.
+            #   * Opt-in signals (any one is enough):
+            #       - ``WorkerPool(submit_after_fill=True)`` — pool-
+            #         wide flag set by the GUI / programmatic caller.
+            #       - ``cfg["submit_after_fill"] == True`` — saved on
+            #         the per-task config by the GUI checkbox.
+            #       - ``cfg["submit"]`` exists — legacy recordings
+            #         that captured a submit block. Preserves the
+            #         pre-bug behaviour where a recorded submit was
+            #         taken as the user's intent.
+            user_opted_in = (
+                self.submit_after_fill
+                or bool(cfg.get("submit_after_fill"))
+            )
+            legacy_recorded_submit = bool(submit_spec)
+            submit_requested = user_opted_in or legacy_recorded_submit
+
+            if submit_requested and not self.dry_run:
+                # Three-tier submit strategy:
                 #   1. Inline submits already in actions[] navigated us
                 #      away → trust them, no double click.
                 #   2. Recorded submit_spec block → click it via v2.
-                #   3. Generic submit_form() fallback → text/role
-                #      selectors for "Submit" / "Send" / "Continue" so
-                #      recordings that stopped before the submit button
-                #      still get submitted when the user wanted them to.
+                #   3. Generic submit_form() fallback — ONLY when the
+                #      user opted in. Legacy ``submit_spec``-only path
+                #      stops at tier 2 (matches pre-bug behaviour and
+                #      avoids text-selector clicks on forms whose
+                #      recorded selector failed to resolve).
                 from replay_engine import run_action
                 from auto_fill import submit_form
 
@@ -320,7 +352,13 @@ class WorkerPool:
                                 f"raised: {exc!r}"
                             )
 
-                    if not clicked:
+                    # Tier 3 fires only when the user opted in via
+                    # ``submit_after_fill``. A legacy recording with
+                    # only ``submit_spec`` stops here — mirroring
+                    # pre-bug pool behaviour — to avoid the generic
+                    # text-selector fallback firing on forms the user
+                    # never asked to be submitted.
+                    if not clicked and user_opted_in:
                         try:
                             await submit_form(page, cfg, self.logger)
                         except Exception as exc:

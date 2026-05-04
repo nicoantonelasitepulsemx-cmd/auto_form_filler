@@ -654,6 +654,10 @@ async def run_multi_proxy(
         dry_run=args.dry_run,
         threshold=0.55,
         debug=args.debug,
+        # Honour ``--submit`` and ``submit_after_fill`` config flag so
+        # CLI proxy-pool runs use the same submit semantics as the GUI.
+        submit_after_fill=bool(getattr(args, "submit", False))
+            or bool(base_cfg.get("submit_after_fill")),
     )
     results = await pool.run_tasks(tasks)
     ok = sum(1 for r in results if r.ok)
@@ -705,6 +709,11 @@ async def run_multi_account(
         dry_run=args.dry_run,
         threshold=0.55,
         debug=args.debug,
+        # Honour ``--submit`` and ``submit_after_fill`` config flag so
+        # CLI multi-account-pool runs use the same submit semantics as
+        # the GUI / single-account run path.
+        submit_after_fill=bool(getattr(args, "submit", False))
+            or bool((base_config or {}).get("submit_after_fill")),
     )
     results = await pool.run_tasks(tasks)
     ok = sum(1 for r in results if r.ok)

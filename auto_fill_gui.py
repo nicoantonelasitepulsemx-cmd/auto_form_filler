@@ -2108,6 +2108,9 @@ class AutoFillGUI(tk.Tk):
                         config_snapshot.get("resolver_threshold", 0.55)
                     ),
                     debug=False,
+                    # Forward the "submit after fill" checkbox so pool
+                    # runs honour the same UX as single-account runs.
+                    submit_after_fill=bool(self.submit_var.get()),
                 )
 
                 loop = asyncio.new_event_loop()
@@ -2294,6 +2297,9 @@ class AutoFillGUI(tk.Tk):
                         config_snapshot.get("resolver_threshold", 0.55)
                     ),
                     debug=debug,
+                    # Forward the "submit after fill" checkbox so proxy
+                    # pool runs honour the same UX as single-account runs.
+                    submit_after_fill=bool(self.submit_var.get()),
                 )
 
                 loop = asyncio.new_event_loop()

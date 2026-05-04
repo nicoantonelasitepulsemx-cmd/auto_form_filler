@@ -39,7 +39,7 @@ from typing import Any, Callable, Optional
 
 from accounts import Account, load_accounts
 from kuku_lu import Kuku, KukuCreds, KukuError, KukuLocalPartTaken
-from proxy_utils import load_proxy_dicts, mask_proxy, parse_proxy_string
+from proxy_utils import mask_proxy, parse_proxy_string
 
 
 # Where we persist the per-user OTP defaults (regex / from-filter /
@@ -233,6 +233,47 @@ def _proxy_to_playwright_dict(proxy_str: str) -> Optional[dict]:
         return parse_proxy_string(proxy_str)
     except Exception:
         return None
+
+
+def _parse_proxy_file_aligned(path: Path) -> tuple[list[tuple[str, dict]], list[str]]:
+    """Read a proxies file and return ``(valid, invalid)`` lists in
+    *exact line order*.
+
+    ``valid`` contains ``(literal_line, parsed_dict)`` tuples — the
+    literal line is the user's original text so the GUI row keeps
+    exactly what was typed; the parsed dict is the Playwright-format
+    proxy. ``invalid`` contains the raw text of any line that failed
+    to parse.
+
+    The previous implementation called ``proxy_utils.load_proxy_dicts``
+    with ``on_error='silent'`` and then indexed the result back into
+    a separately-built ``lines`` list. ``load_proxy_dicts`` silently
+    drops invalid lines, so for a file with ``[good, good, bad,
+    good]`` the parsed list had length 3 while ``lines`` had length 4
+    — every row from the bad line onwards got the *next* line's text
+    paired with the *current* line's parsed dict, corrupting the
+    proxy → account mapping (Devin Review BUG #3182774684).
+
+    By zipping ``parse_proxy_string`` with the raw line in the same
+    loop, alignment is impossible to break: each entry in ``valid``
+    pairs the line that produced its parsed dict.
+    """
+    raw = path.read_text(encoding="utf-8")
+    valid: list[tuple[str, dict]] = []
+    invalid: list[str] = []
+    for ln in raw.splitlines():
+        stripped = ln.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            d = parse_proxy_string(stripped)
+        except Exception:
+            d = None
+        if d:
+            valid.append((stripped, d))
+        else:
+            invalid.append(stripped)
+    return valid, invalid
 
 
 @dataclasses.dataclass
@@ -1171,30 +1212,20 @@ class MailPerProxyDialog(tk.Toplevel):
         if not path:
             return
         try:
-            proxies_dicts = load_proxy_dicts(path, on_error="silent")
+            valid, invalid = _parse_proxy_file_aligned(Path(path))
         except Exception as exc:
-            messagebox.showerror("Mail-per-proxy", f"Failed to parse:\n{exc}", parent=self)
+            messagebox.showerror("Mail-per-proxy", f"Failed to read:\n{exc}", parent=self)
             return
-        if not proxies_dicts:
+        if not valid and not invalid:
             messagebox.showwarning(
                 "Mail-per-proxy",
-                "No valid proxies parsed.",
+                "No proxy lines found.",
                 parent=self,
             )
             return
-        # Extract proxy strings from the original file so the row keeps
-        # the user's literal input. Fall back to the dict server URL if
-        # we can't re-read the line.
-        try:
-            lines = [
-                ln.strip() for ln in Path(path).read_text(encoding="utf-8").splitlines()
-                if ln.strip() and not ln.strip().startswith("#")
-            ]
-        except Exception:
-            lines = []
         existing = {r.name for r in self._rows}
         added = 0
-        for i, _ in enumerate(proxies_dicts):
+        for i, (proxy_str, _proxy_dict) in enumerate(valid):
             name_base = f"proxy_{i + 1}"
             n = name_base
             j = 1
@@ -1202,21 +1233,32 @@ class MailPerProxyDialog(tk.Toplevel):
                 j += 1
                 n = f"{name_base}_{j}"
             existing.add(n)
-            proxy_str = lines[i] if i < len(lines) else proxies_dicts[i].get("server", "")
             row = _AccountRow(name=n, proxy=proxy_str)
-            # B5: validate the proxy at row-add time. Invalid strings still
-            # make it onto the table (so the user can fix them inline) but
-            # are colour-tagged ``invalid_proxy`` and tagged with an
-            # explanatory status so they don't silently start mints with
-            # broken settings.
-            if proxy_str and _proxy_to_playwright_dict(proxy_str) is None:
-                row.status = "err: bad proxy"
-                self._log(f"[bulk] invalid proxy on {n}: {proxy_str!r}")
             self._rows.append(row)
+            added += 1
+        # Surface invalid lines as their own (empty-proxy) rows so the
+        # user can see and fix them inline rather than having them
+        # silently disappear. Each gets the bad-proxy status flag so
+        # mint attempts won't start with broken settings.
+        for bad_line in invalid:
+            name_base = f"proxy_invalid_{added + 1}"
+            n = name_base
+            j = 1
+            while n in existing:
+                j += 1
+                n = f"{name_base}_{j}"
+            existing.add(n)
+            row = _AccountRow(name=n, proxy=bad_line)
+            row.status = "err: bad proxy"
+            self._rows.append(row)
+            self._log(f"[bulk] invalid proxy line: {bad_line!r}")
             added += 1
         self._refresh_table()
         self._mark_dirty()
-        self._log(f"[bulk] added {added} account(s) from {path}")
+        self._log(
+            f"[bulk] added {added} account(s) from {path} "
+            f"({len(valid)} valid, {len(invalid)} invalid)"
+        )
         messagebox.showinfo(
             "Mail-per-proxy",
             f"Added {added} account(s). Use 'Mint mailbox' on each (or "

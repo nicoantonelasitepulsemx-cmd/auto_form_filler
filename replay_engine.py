@@ -1356,6 +1356,13 @@ async def run_actions(
     short-circuits silently if the page never navigated — nothing breaks
     when the click did not cause a load.
     """
+    # v4 GHOST COALESCE: pre-v4 recordings carry sibling-flip
+    # ghosts as separate ``check checked=true`` actions. Drop them
+    # here so an OLD recording made before the recorder fix still
+    # replays correctly (this is the user's "tm4.json" case — the
+    # recorder fix only protects NEW recordings; this pass protects
+    # existing ones).
+    actions = _normalize_radio_ghost_actions(actions, logger=logger)
     filled = 0
     skipped = 0
     for i, action in enumerate(actions):
@@ -1382,6 +1389,110 @@ async def run_actions(
             extra = random.randint(0, jitter) if jitter > 0 else 0
             await asyncio.sleep((base + extra) / 1000.0)
     return filled, skipped
+
+
+def _radio_group_key(action: dict) -> Optional[tuple]:
+    """Group key for two radio-check actions targeting the same group.
+
+    Used by :func:`_normalize_radio_ghost_actions` to coalesce
+    consecutive ``check checked=true`` actions that the **old**
+    pre-fix recorder shipped when React fired a synthetic
+    sibling-flip change burst right after a real user click. Only
+    the first (user's actual choice) survives the coalesce — the
+    later one is the ghost.
+
+    The grouping signals — in priority order:
+
+    1. ``_hidden_input_name`` (set when the recorder promoted a click
+       on a label/span to the hidden ``<input type=radio name=...>``).
+    2. ``fingerprint.attributes.name`` (native ``<input type=radio>``).
+    3. ``fingerprint.attributes.aria-controls`` /
+       ``fingerprint.attributes.role-group`` for ARIA radios where the
+       recorder didn't capture an HTML name.
+
+    Returns ``None`` when the action isn't a radio check (so it
+    can't participate in coalescing).
+    """
+    if (action.get("kind") or "").lower() != "check":
+        return None
+    if not _is_radio_check_action(action):
+        return None
+    if action.get("checked") is False:
+        return None  # checked=false ghosts are dropped elsewhere
+    fp = action.get("fingerprint") or {}
+    attrs = (fp.get("attributes") or {}) if isinstance(fp.get("attributes"), dict) else {}
+    name = (
+        action.get("_hidden_input_name")
+        or attrs.get("name")
+        or attrs.get("aria-controls")
+    )
+    if not name:
+        return None
+    frame_chain = tuple(action.get("frame_chain") or ())
+    return (frame_chain, str(name))
+
+
+def _normalize_radio_ghost_actions(
+    actions: list[dict],
+    *,
+    ghost_window_ms: int = 350,
+    logger=None,
+) -> list[dict]:
+    """Coalesce consecutive sibling-flip ghosts on radio groups.
+
+    *Recordings made with pre-v4 recorders* contain a real bug: when
+    React (or any SPA) reacts to a user click on a radio by firing a
+    synthetic ``click`` on the next sibling to deselect it, Chromium
+    runs the activation behavior on that sibling and dispatches a
+    trusted ``change`` event. The old recorder happily captured that
+    as a *second* ``check checked=true`` action — so on replay the
+    form lands on the wrong sibling (the user's reported "I am the
+    rights owner" → "I am reporting on behalf of someone else"
+    symptom).
+
+    This pass scans the action list and, when it finds two
+    ``check checked=true`` actions on the same radio group whose
+    timestamps are within ``ghost_window_ms`` of each other, drops
+    the *second* (the ghost). The first is the user's actual pick.
+
+    The window is generous (350ms by default) to cover both React's
+    batched-render tick and slower devices the recording may have
+    been made on. A real "user changes mind" click would happen many
+    seconds later — those legitimate sequences are not affected.
+
+    Returns a new list; the input is not mutated.
+    """
+    if not actions:
+        return list(actions)
+    out: list[dict] = []
+    last_radio_at: dict[tuple, float] = {}
+    dropped = 0
+    for act in actions:
+        key = _radio_group_key(act)
+        if key is not None:
+            ts = act.get("ts")
+            if isinstance(ts, (int, float)):
+                prev_ts = last_radio_at.get(key)
+                if prev_ts is not None and (ts - prev_ts) <= ghost_window_ms:
+                    if logger is not None:
+                        logger.info(
+                            "  [GHOST_DROP] coalescing radio sibling-flip "
+                            f"ghost on group {key[1]!r} (Δ={ts - prev_ts:.0f}ms ≤ "
+                            f"{ghost_window_ms}ms): dropping action "
+                            f"{act.get('field_id')!r}"
+                        )
+                    dropped += 1
+                    continue
+                last_radio_at[key] = float(ts)
+            else:
+                last_radio_at[key] = float("inf")
+        out.append(act)
+    if dropped and logger is not None:
+        logger.info(
+            f"  [GHOST_DROP] {dropped} radio sibling-flip ghost action(s) "
+            "coalesced before replay"
+        )
+    return out
 
 
 def _action_may_navigate(action: dict) -> bool:

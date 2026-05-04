@@ -382,7 +382,8 @@ async def _do_click(page: Page, loc: Locator, action: dict, *, logger) -> bool:
 
 
 async def _verify_radio_outcome(
-    page: Page, loc: Locator, action: dict, logger
+    page: Page, loc: Locator, action: dict, logger,
+    settle_ms: int = 250,
 ) -> bool:
     """Confirm the right radio is selected after a check action.
 
@@ -395,12 +396,24 @@ async def _verify_radio_outcome(
     attempt ladder. This is the central guard against the Facebook
     trademark-form bug where the resolver's role_name lookup picked
     a sibling whose accessible name differed only by a few words.
+
+    ``settle_ms`` waits for late-arriving sibling-flip mutations from
+    React/SPA forms — the page may dispatch a controlled re-render or
+    a synthetic click on the previously-selected sibling shortly after
+    the user click, leaving the wrong option selected if we verify too
+    eagerly. 250 ms covers the typical React batched-render tick
+    (~16 ms × N) without slowing replay down meaningfully.
     """
     fp = action.get("fingerprint") or {}
     rec_name = (fp.get("accessible_name") or "").strip()
     rec_value = (action.get("radio_value") or "").strip()
     if not rec_name and not rec_value:
         return True
+    if settle_ms > 0:
+        try:
+            await asyncio.sleep(settle_ms / 1000.0)
+        except Exception:
+            pass
     try:
         live = await loc.evaluate(
             """el => {
@@ -883,27 +896,54 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         pass
 
     # ---- Attempt 5: JS direct manipulation of the hidden input ----
+    # Critical: we deliberately do NOT dispatch a synthetic ``click`` event
+    # here. React/SPA forms (Facebook trademark, etc.) hook the label's
+    # click handler to dispatch a sibling-flip on the *next* radio in the
+    # group. Firing ``click`` from our heal would re-trigger that ghost
+    # and undo the heal. ``change`` + ``input`` alone are enough to sync
+    # the controlled-component state of every framework we care about.
+    #
+    # We also retry the heal up to 3 times with a 250 ms settle between
+    # attempts, in case the ghost listener is keyed off ``change`` (rare,
+    # but seen in some headless-ui radio-group implementations) and tries
+    # to flip our pick back. Each iteration re-reads ``el.checked`` and
+    # only re-sets when it has drifted.
     if hidden_input_name:
         try:
-            ok = await page.evaluate(
-                """([name, val, inputType, desired]) => {
-                    const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
-                    const inputs = document.querySelectorAll(sel);
-                    for (const inp of inputs) {
-                        if (val && inp.value !== val) continue;
-                        inp.checked = desired;
-                        inp.dispatchEvent(new Event('change', {bubbles: true}));
-                        inp.dispatchEvent(new Event('input',  {bubbles: true}));
-                        inp.dispatchEvent(new Event('click',  {bubbles: true}));
-                        return true;
-                    }
-                    return false;
-                }""",
-                [hidden_input_name, radio_value or "", hidden_input_type or "radio", desired],
-            )
-            if ok:
-                logger.info("  [CHECK_OK] healed via JS direct set on hidden input")
-                return True
+            for _attempt in range(3):
+                ok = await page.evaluate(
+                    """([name, val, inputType, desired]) => {
+                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const inputs = document.querySelectorAll(sel);
+                        for (const inp of inputs) {
+                            if (val && inp.value !== val) continue;
+                            inp.checked = desired;
+                            inp.dispatchEvent(new Event('change', {bubbles: true}));
+                            inp.dispatchEvent(new Event('input',  {bubbles: true}));
+                            return true;
+                        }
+                        return false;
+                    }""",
+                    [hidden_input_name, radio_value or "", hidden_input_type or "radio", desired],
+                )
+                if not ok:
+                    break
+                await asyncio.sleep(0.25)
+                state_ok = await page.evaluate(
+                    """([name, val, inputType, desired]) => {
+                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const inputs = document.querySelectorAll(sel);
+                        for (const inp of inputs) {
+                            if (val && inp.value !== val) continue;
+                            return inp.checked === desired;
+                        }
+                        return false;
+                    }""",
+                    [hidden_input_name, radio_value or "", hidden_input_type or "radio", desired],
+                )
+                if state_ok:
+                    logger.info("  [CHECK_OK] healed via JS direct set on hidden input")
+                    return True
         except Exception:
             pass
 

@@ -459,6 +459,21 @@ OVERLAY_JS = r"""
       return;
     }
 
+    // v4 R2 FIX: drop the trusted ``change`` that Chromium dispatches as
+    // the activation behavior of a synthetic click. The click handler
+    // (line ~687) stamps ``__af_synth_change_until`` on the input when
+    // it filters an isTrusted=false click; honour that stamp here. Without
+    // this guard, React-style libraries (and the Facebook trademark form
+    // specifically) cause the recorder to ship "wrong sibling" actions
+    // even though the click event itself was correctly filtered.
+    if (tag === "input" && (t === "radio" || t === "checkbox")) {
+      try {
+        if (el.__af_synth_change_until && ts() < el.__af_synth_change_until) {
+          return;
+        }
+      } catch (e) {}
+    }
+
     if (tag === "select") {
       const opt = el.options[el.selectedIndex];
       ship("select", el, { value: el.value, value_label: opt ? opt.text : null });
@@ -686,10 +701,32 @@ OVERLAY_JS = r"""
     // captured by automated capture flows and must keep working.
     if (ev.isTrusted === false) {
       const t0 = ev.target;
-      if (t0 && t0.closest && t0.closest(
+      const proxy = t0 && t0.closest && t0.closest(
         'input[type="radio"], input[type="checkbox"],' +
         '[role="radio"], [role="checkbox"]'
-      )) {
+      );
+      if (proxy) {
+        // v4 R2 FIX: Chromium runs the activation behavior of a synthetic
+        // click on a native radio/checkbox input — and the `change` event
+        // it dispatches as part of that activation has ``isTrusted === true``,
+        // even though the originating click was synthetic. The
+        // ``ev.isTrusted === false`` filter in the ``change`` handler above
+        // therefore CANNOT see the ghost on its own. Stamp the proxy + the
+        // actual native input the click would activate so the change handler
+        // can drop the follow-up. 250ms is comfortably longer than the
+        // microtask-queued change dispatch (<1ms) but short enough that a
+        // genuine subsequent user click on the same element is not silently
+        // swallowed.
+        const stamp = ts();
+        try { proxy.__af_synth_change_until = stamp + 250; } catch (e) {}
+        // Also mark the underlying native input when the proxy is an
+        // ARIA wrapper (role=radio/checkbox) wrapping a hidden input.
+        try {
+          const inner = proxy.querySelector && proxy.querySelector(
+            'input[type="radio"], input[type="checkbox"]'
+          );
+          if (inner) inner.__af_synth_change_until = stamp + 250;
+        } catch (e) {}
         return;
       }
     }

@@ -2092,11 +2092,21 @@ class AutoFillGUI(tk.Tk):
                             bits.append(f"{k}={payload[k]!r}")
                     self.log_queue.put_nowait(" ".join(bits))
 
+                # Mirror the CLI's ``resolver_threshold`` plumbing so a
+                # GUI-launched run resolves elements with the same
+                # similarity bar as ``python auto_fill.py``. Without
+                # an explicit threshold we'd rely on WorkerPool's
+                # default which has historically drifted from
+                # auto_fill.py's hard-coded 0.55 (Devin Review BUG
+                # #3182896847).
                 pool = WorkerPool(
                     accts,
                     max_concurrency=workers or len(accts),
                     report_cb=report,
                     dry_run=bool(self.dry_run_var.get()),
+                    threshold=float(
+                        config_snapshot.get("resolver_threshold", 0.55)
+                    ),
                     debug=False,
                 )
 
@@ -2273,11 +2283,16 @@ class AutoFillGUI(tk.Tk):
                             bits.append(f"{k}={payload[k]!r}")
                     self.log_queue.put_nowait(" ".join(bits))
 
+                # Same explicit-threshold rationale as the multi-account
+                # pool above (Devin Review BUG #3182896847).
                 pool = WorkerPool(
                     accts,
                     max_concurrency=workers or len(accts),
                     report_cb=report,
                     dry_run=dry_run,
+                    threshold=float(
+                        config_snapshot.get("resolver_threshold", 0.55)
+                    ),
                     debug=debug,
                 )
 

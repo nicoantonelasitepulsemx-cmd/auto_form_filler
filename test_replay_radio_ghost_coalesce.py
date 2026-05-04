@@ -109,15 +109,83 @@ def test_three_radio_burst_keeps_only_first() -> None:
     assert out[0]["radio_value"] == "self"
 
 
-def test_legitimate_user_change_of_mind_not_coalesced() -> None:
-    """If the user genuinely changes their mind 10s later, both
-    clicks must survive."""
+def test_legitimate_user_change_of_mind_window_mode() -> None:
+    """In ``window`` mode, a 10s-later click survives."""
     actions = [
         _radio("self", "rel", "self", 100.0),
         _radio("agent", "rel", "agent", 10_100.0),  # 10s later
     ]
-    out = _normalize_radio_ghost_actions(actions)
+    out = _normalize_radio_ghost_actions(actions, mode="window")
     assert len(out) == 2
+
+
+def test_first_wins_drops_change_of_mind_too() -> None:
+    """In ``first_wins`` mode, even a 10s-later click is dropped —
+    the trade-off documented in the docstring. Recordings where the
+    user genuinely re-picks must opt into ``mode='window'``."""
+    actions = [
+        _radio("self", "rel", "self", 100.0),
+        _radio("agent", "rel", "agent", 10_100.0),
+    ]
+    out = _normalize_radio_ghost_actions(actions, mode="first_wins")
+    assert len(out) == 1
+    assert out[0]["radio_value"] == "self"
+
+
+def test_facebook_trademark_tm4_real_recording_pattern() -> None:
+    """Real-world reproduction of tm4.json's broken recording
+    pattern: one ``check`` on ``self``, then a sibling-flip ghost
+    on ``someone_else`` 927ms later, then a form-rerender ghost
+    47s later. ``first_wins`` keeps the user's actual pick."""
+    actions = [
+        _radio("self", "relationship_rightsowner", "I am the rights owner", 1258045),
+        # Sibling-flip ghost (React's group-deselect handler).
+        _radio(
+            "agent_ghost1", "relationship_rightsowner",
+            "I am reporting on behalf of someone else.", 1258972,
+        ),
+        # Form-rerender ghost (47s after, after text fills).
+        _radio(
+            "agent_ghost2", "relationship_rightsowner",
+            "I am reporting on behalf of someone else.", 1305293,
+        ),
+    ]
+    out = _normalize_radio_ghost_actions(actions, mode="first_wins")
+    assert len(out) == 1
+    assert out[0]["radio_value"] == "I am the rights owner"
+
+
+def test_form_rerender_ghost_burst_collapsed() -> None:
+    """Real tm4.json has 7 (!) check actions on ``no_tm_database``
+    all carrying the same value because the form re-mounts the
+    radio every time a conditional section appears. ``first_wins``
+    must collapse them all to one."""
+    cert = "I have a trademark certificate to attach"
+    actions = [
+        _radio(f"r{i}", "no_tm_database", cert, 1307924 + 5000 * i)
+        for i in range(7)
+    ]
+    out = _normalize_radio_ghost_actions(actions, mode="first_wins")
+    assert len(out) == 1
+    assert out[0]["ts"] == 1307924  # the first one
+
+
+def test_mode_none_passes_through() -> None:
+    actions = [
+        _radio("self", "rel", "self", 100.0),
+        _radio("agent", "rel", "agent", 200.0),
+    ]
+    out = _normalize_radio_ghost_actions(actions, mode="none")
+    assert out == actions
+    assert out is not actions  # still a new list
+
+
+def test_mode_unknown_raises() -> None:
+    import pytest
+    with pytest.raises(ValueError):
+        _normalize_radio_ghost_actions(
+            [_radio("a", "g", "v", 1)], mode="bogus"
+        )
 
 
 def test_coalesce_preserves_non_radio_actions() -> None:
@@ -193,15 +261,50 @@ def test_empty_input_returns_empty_list() -> None:
     assert _normalize_radio_ghost_actions([]) == []
 
 
-def test_actions_without_ts_are_passed_through() -> None:
+def test_actions_without_ts_are_passed_through_in_window_mode() -> None:
     """If the recording is missing timestamps (very old format),
-    we can't measure ghost windows — pass through unchanged rather
-    than incorrectly dropping legitimate actions."""
+    ``window`` mode can't measure ghost windows so it passes
+    everything through. (``first_wins`` mode still coalesces
+    because it doesn't depend on timestamps.)"""
     a = _radio("self", "rel", "self", 0)
     del a["ts"]
     b = _radio("agent", "rel", "agent", 0)
     del b["ts"]
-    out = _normalize_radio_ghost_actions([a, b])
+    out = _normalize_radio_ghost_actions([a, b], mode="window")
+    assert len(out) == 2
+
+
+def test_no_ts_followed_by_valid_ts_does_not_drop_valid_in_window_mode() -> None:
+    """Devin Review BUG #3182896670: the previous implementation set
+    ``last_radio_at[key] = float('inf')`` for ts-less actions, which
+    caused the *next* action with a real timestamp to compute
+    ``ts - inf = -inf`` and be silently dropped as a "ghost" because
+    ``-inf <= 350`` is always True.
+
+    The fix uses a NaN sentinel so the next numeric ts comparison
+    is skipped (NaN comparisons are filtered) — letting the
+    legitimate later click survive."""
+    a = _radio("self", "rel", "self", 0)
+    del a["ts"]
+    b = _radio("agent", "rel", "agent", 5_000.0)  # 5s later, definitely user's choice
+    out = _normalize_radio_ghost_actions([a, b], mode="window")
+    assert len(out) == 2, (
+        "ts-less first action wrongly cancelled the second action's "
+        "ts comparison — sentinel regression"
+    )
+    assert out[0]["radio_value"] == "self"
+    assert out[1]["radio_value"] == "agent"
+
+
+def test_no_ts_action_does_not_swallow_immediately_following_valid_ts() -> None:
+    """Even when the second action's ts is small (e.g., 10ms), the
+    no-ts predecessor must not poison its window calculation."""
+    a = _radio("self", "rel", "self", 0)
+    del a["ts"]
+    b = _radio("agent", "rel", "agent", 10.0)
+    out = _normalize_radio_ghost_actions([a, b], mode="window")
+    # Both survive — the ts-less action has no defined window so
+    # the second's ts-window comparison is never satisfied.
     assert len(out) == 2
 
 
@@ -223,11 +326,17 @@ if __name__ == "__main__":
     test_radio_group_key_separates_different_names()
     test_facebook_trademark_ghost_is_dropped()
     test_three_radio_burst_keeps_only_first()
-    test_legitimate_user_change_of_mind_not_coalesced()
+    test_legitimate_user_change_of_mind_window_mode()
+    test_first_wins_drops_change_of_mind_too()
+    test_facebook_trademark_tm4_real_recording_pattern()
+    test_form_rerender_ghost_burst_collapsed()
+    test_mode_none_passes_through()
     test_coalesce_preserves_non_radio_actions()
     test_two_separate_groups_dont_interfere()
     test_aria_radio_ghost_dropped_via_fingerprint_role()
     test_empty_input_returns_empty_list()
-    test_actions_without_ts_are_passed_through()
+    test_actions_without_ts_are_passed_through_in_window_mode()
+    test_no_ts_followed_by_valid_ts_does_not_drop_valid_in_window_mode()
+    test_no_ts_action_does_not_swallow_immediately_following_valid_ts()
     test_input_list_is_not_mutated()
     print("ok all")

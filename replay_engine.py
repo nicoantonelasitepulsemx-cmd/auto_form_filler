@@ -1435,62 +1435,108 @@ def _radio_group_key(action: dict) -> Optional[tuple]:
 def _normalize_radio_ghost_actions(
     actions: list[dict],
     *,
+    mode: str = "first_wins",
     ghost_window_ms: int = 350,
     logger=None,
 ) -> list[dict]:
-    """Coalesce consecutive sibling-flip ghosts on radio groups.
+    """Coalesce sibling-flip ghosts and form-rerender duplicates on radio groups.
 
-    *Recordings made with pre-v4 recorders* contain a real bug: when
-    React (or any SPA) reacts to a user click on a radio by firing a
-    synthetic ``click`` on the next sibling to deselect it, Chromium
-    runs the activation behavior on that sibling and dispatches a
-    trusted ``change`` event. The old recorder happily captured that
-    as a *second* ``check checked=true`` action — so on replay the
-    form lands on the wrong sibling (the user's reported "I am the
-    rights owner" → "I am reporting on behalf of someone else"
-    symptom).
+    Empirical analysis of real broken recordings (notably the user's
+    Facebook trademark form ``tm4.json``) shows that the OLD recorder
+    captures *several* ``check checked=true`` events per radio group
+    even when the user only clicked once:
 
-    This pass scans the action list and, when it finds two
-    ``check checked=true`` actions on the same radio group whose
-    timestamps are within ``ghost_window_ms`` of each other, drops
-    the *second* (the ghost). The first is the user's actual pick.
+      1. The genuine user click.
+      2. A sibling-flip ghost ~100-1000ms later (React's group
+         deselect-by-click handler — Chromium's activation behavior
+         on the synthetic click fires a trusted ``change``).
+      3. **Form-rerender ghosts** seconds or minutes later, when the
+         page conditionally re-mounts the radio group (for example
+         after the user fills in upstream text fields and the form
+         shows a new section). Each remount fires a ``change`` event
+         that the recorder dumps as another ``check checked=true``.
 
-    The window is generous (350ms by default) to cover both React's
-    batched-render tick and slower devices the recording may have
-    been made on. A real "user changes mind" click would happen many
-    seconds later — those legitimate sequences are not affected.
+    Time-window-only coalescing (the previous strategy) couldn't
+    catch (3) because the gap is 30-50 seconds. The user's tm4.json
+    has 7 ``check`` actions on the ``no_tm_database`` group, 3 on
+    ``court_order``, and 3 on ``relationship_rightsowner`` — even
+    though the user clicked each group exactly once.
+
+    Modes:
+      * ``"first_wins"`` *(default)* — for each radio group, only
+        the first ``check checked=true`` action survives. All later
+        actions on the same group are dropped, regardless of
+        timestamp distance. This matches the dominant real-world
+        case (one user click per group); recordings where the user
+        legitimately re-picked a sibling need to use ``"window"``
+        mode or be re-recorded.
+      * ``"window"`` — drop only same-group actions whose ts is
+        within ``ghost_window_ms`` of the previous same-group
+        action. This is the looser, time-based heuristic; useful
+        when the user actually changes their selection inside a
+        single recording.
+      * ``"none"`` — pass through unchanged (used for unit tests).
 
     Returns a new list; the input is not mutated.
     """
-    if not actions:
+    if not actions or mode == "none":
         return list(actions)
+    if mode not in ("first_wins", "window"):
+        raise ValueError(f"unknown coalesce mode {mode!r}")
+
     out: list[dict] = []
-    last_radio_at: dict[tuple, float] = {}
+    seen: dict[tuple, float] = {}  # group key → last kept ts
     dropped = 0
     for act in actions:
         key = _radio_group_key(act)
         if key is not None:
             ts = act.get("ts")
-            if isinstance(ts, (int, float)):
-                prev_ts = last_radio_at.get(key)
-                if prev_ts is not None and (ts - prev_ts) <= ghost_window_ms:
+            if mode == "first_wins":
+                if key in seen:
                     if logger is not None:
+                        prev = seen[key]
+                        delta = (
+                            f"Δ={ts - prev:.0f}ms"
+                            if isinstance(ts, (int, float)) and isinstance(prev, (int, float))
+                            else "Δ=?"
+                        )
                         logger.info(
-                            "  [GHOST_DROP] coalescing radio sibling-flip "
-                            f"ghost on group {key[1]!r} (Δ={ts - prev_ts:.0f}ms ≤ "
-                            f"{ghost_window_ms}ms): dropping action "
-                            f"{act.get('field_id')!r}"
+                            "  [GHOST_DROP] first-wins: "
+                            f"group {key[1]!r} already has a winner ({delta}); "
+                            f"dropping action {act.get('field_id')!r}"
                         )
                     dropped += 1
                     continue
-                last_radio_at[key] = float(ts)
-            else:
-                last_radio_at[key] = float("inf")
+                seen[key] = float(ts) if isinstance(ts, (int, float)) else float("nan")
+            else:  # mode == "window"
+                if isinstance(ts, (int, float)):
+                    prev_ts = seen.get(key)
+                    if (
+                        prev_ts is not None
+                        and isinstance(prev_ts, float)
+                        and prev_ts == prev_ts  # filter out NaN sentinel
+                        and (ts - prev_ts) <= ghost_window_ms
+                    ):
+                        if logger is not None:
+                            logger.info(
+                                "  [GHOST_DROP] window-coalesce: "
+                                f"group {key[1]!r} (Δ={ts - prev_ts:.0f}ms ≤ "
+                                f"{ghost_window_ms}ms); dropping action "
+                                f"{act.get('field_id')!r}"
+                            )
+                        dropped += 1
+                        continue
+                    seen[key] = float(ts)
+                else:
+                    # ts-less actions can't gate the time window; mark with
+                    # NaN so the next numeric ts won't compare against a
+                    # poisoned sentinel (Devin Review BUG #3182896670).
+                    seen[key] = float("nan")
         out.append(act)
     if dropped and logger is not None:
         logger.info(
-            f"  [GHOST_DROP] {dropped} radio sibling-flip ghost action(s) "
-            "coalesced before replay"
+            f"  [GHOST_DROP] {dropped} duplicate radio action(s) coalesced "
+            f"before replay (mode={mode!r})"
         )
     return out
 

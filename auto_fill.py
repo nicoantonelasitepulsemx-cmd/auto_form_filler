@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -26,10 +27,15 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from accounts import load_accounts
+from accounts import accounts_from_proxies, load_accounts
 from captcha import detect_captcha, pause_for_human
 from logger import get_logger
-from proxy_utils import add_cli_args as _add_proxy_cli_args, mask_proxy, resolve_proxy
+from proxy_utils import (
+    add_cli_args as _add_proxy_cli_args,
+    load_proxy_dicts,
+    mask_proxy,
+    resolve_proxy,
+)
 from replay_engine import run_actions as _run_v2_actions, run_action as _run_v2_action
 from target_resolver import resolve_target
 from worker_pool import Task, WorkerPool
@@ -257,28 +263,65 @@ async def fill_one_field(
 # --------------------------------------------------------------------------------------
 
 
-async def submit_form(page: Page, config: dict, logger) -> None:
+async def submit_form(page: Page, config: dict, logger) -> bool:
+    """Generic submit-button fallback.
+
+    Tries a battery of selectors that match real-world submit buttons
+    (native ``type=submit`` first, then text/role variants in common
+    English + Vietnamese). Returns ``True`` when a button was found
+    *and* visible *and* clicked; returns ``False`` when nothing
+    matched or every match was disabled/off-screen.
+
+    Caller is expected to handle the False case (e.g. the action
+    stream may have already navigated past the form).
+    """
     selectors = config.get("submit_selectors") or [
-        'button[type="submit"]',
-        'input[type="submit"]',
+        # Native submits — strongest signal.
+        'button[type="submit"]:visible',
+        'input[type="submit"]:visible',
+        # ARIA / role-based.
+        'button[role="button"]:has-text("Submit")',
+        # Text-based (English + Vietnamese the recorder may have seen).
         'button:has-text("Submit")',
         'button:has-text("Send")',
         'button:has-text("Continue")',
+        'button:has-text("Confirm")',
+        'button:has-text("Gửi")',
+        'button:has-text("Tiếp")',
+        # Last-resort native fallbacks (no :visible filter for sites
+        # that hide the button with CSS but still register clicks).
+        'button[type="submit"]',
+        'input[type="submit"]',
     ]
     for sel in selectors:
         try:
             btn = page.locator(sel).first
-            if await btn.count() > 0:
-                logger.info(f"[SUBMIT] clicking {sel}")
-                await btn.click()
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=15000)
-                except PlaywrightTimeoutError:
-                    pass
-                return
-        except Exception:
+            count = await btn.count()
+            if count == 0:
+                continue
+            # Skip disabled/hidden buttons — clicking those is a no-op
+            # and consumes our one chance per selector.
+            try:
+                if not await btn.is_visible():
+                    continue
+                if not await btn.is_enabled():
+                    continue
+            except Exception:
+                # If is_visible/is_enabled raise (e.g. element detached
+                # mid-check), fall through and try clicking anyway.
+                pass
+            logger.info(f"[SUBMIT] clicking {sel}")
+            await btn.click()
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+            return True
+        except Exception as exc:
+            logger.debug(f"[SUBMIT] selector {sel!r} failed: {exc!r}")
             continue
     logger.warning("[SUBMIT] no submit button matched any selector")
+    return False
 
 
 # --------------------------------------------------------------------------------------
@@ -335,6 +378,16 @@ async def run(config: dict, args: argparse.Namespace, logger) -> int:
     dry_run = args.dry_run or config.get("dry_run", False)
     debug = args.debug
     is_v2 = _is_v2_config(config)
+
+    # Honour ``submit_after_fill`` in the config as a fallback for
+    # ``--submit`` / GUI-args.submit. This lets profiles persist the
+    # "submit after fill" checkbox state across runs without the
+    # caller having to mirror the flag on every CLI invocation.
+    if not getattr(args, "submit", False) and config.get("submit_after_fill"):
+        args.submit = True
+        logger.info(
+            "[SUBMIT] enabled from config.submit_after_fill=true"
+        )
 
     chrome_profile = getattr(args, "chrome_profile", None) or config.get("chrome_profile")
 
@@ -420,6 +473,7 @@ async def run(config: dict, args: argparse.Namespace, logger) -> int:
             # ---- v2 path: action-driven replay ----
             actions = config.get("actions", [])
             ctx_vars = dict(config.get("vars") or {})
+            url_before_actions = page.url
             filled, skipped = await _run_v2_actions(
                 page, actions,
                 ctx=ctx_vars,
@@ -429,16 +483,75 @@ async def run(config: dict, args: argparse.Namespace, logger) -> int:
                 action_delay_ms=int(config.get("action_delay_ms", 120)),
                 action_jitter_ms=int(config.get("action_jitter_ms", 80)),
             )
-            if args.submit and not dry_run and config.get("submit"):
-                # Post-fill CAPTCHA check
-                await _maybe_handle_captcha(page, args, config, logger)
-                submit_action = {**config["submit"], "kind": "click", "field_id": "submit"}
-                await _run_v2_action(
-                    page, submit_action,
-                    threshold=float(config.get("resolver_threshold", 0.55)),
-                    dry_run=False, logger=logger,
+            if args.submit and not dry_run:
+                # "Submit after fill" — robust three-tier strategy:
+                #   1. If the action stream already had inline ``submit``
+                #      kinds AND the page navigated away from the form,
+                #      assume those did the job (no double-click risk).
+                #   2. Else try the recorded ``config["submit"]`` block
+                #      via the v2 resolver (fingerprint-stable, the v1+
+                #      back-compat path).
+                #   3. Else fall back to ``submit_form()`` which scans
+                #      generic selectors (button[type=submit],
+                #      "Submit"/"Send"/"Continue" text). This is the
+                #      safety net for recordings that stopped before
+                #      capturing the submit button.
+                inline_submits = [
+                    a for a in (actions or [])
+                    if (a.get("kind") or "").lower() == "submit"
+                ]
+                page_url_changed = page.url != url_before_actions
+                logger.info(
+                    f"[SUBMIT] post-fill submit requested — "
+                    f"inline_submits={len(inline_submits)} "
+                    f"page_url_changed={page_url_changed}"
                 )
-                await _maybe_handle_captcha(page, args, config, logger)
+
+                already_submitted = bool(inline_submits) and page_url_changed
+                if already_submitted:
+                    logger.info(
+                        "[SUBMIT] action stream already submitted "
+                        f"(URL: {url_before_actions!r} → {page.url!r})"
+                    )
+                else:
+                    await _maybe_handle_captcha(page, args, config, logger)
+                    clicked = False
+
+                    # Tier 2: recorded submit block (fingerprint-driven).
+                    submit_block = config.get("submit")
+                    if submit_block:
+                        try:
+                            submit_action = {
+                                **submit_block,
+                                "kind": "click",
+                                "field_id": "submit",
+                            }
+                            ok = await _run_v2_action(
+                                page, submit_action,
+                                threshold=float(
+                                    config.get("resolver_threshold", 0.55)
+                                ),
+                                dry_run=False, logger=logger,
+                            )
+                            clicked = bool(ok)
+                            if clicked:
+                                logger.info(
+                                    "[SUBMIT] clicked recorded submit block"
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                f"[SUBMIT] recorded submit failed: {exc!r}"
+                            )
+
+                    # Tier 3: generic selector fallback.
+                    if not clicked:
+                        logger.info(
+                            "[SUBMIT] falling back to generic submit_form() "
+                            "(submit_selectors)"
+                        )
+                        await submit_form(page, config, logger)
+
+                    await _maybe_handle_captcha(page, args, config, logger)
         else:
             # ---- v1 legacy path ----
             filled = skipped = 0
@@ -486,6 +599,72 @@ def _print_report_event(evt: str, payload: dict) -> None:
     print("  ".join(parts))
 
 
+async def run_multi_proxy(
+    *,
+    proxy_pool_path: str,
+    base_config: Optional[dict],
+    args: argparse.Namespace,
+    logger,
+) -> int:
+    """Run the same config concurrently across N proxies (one BrowserContext each).
+
+    Triggered by ``auto_fill.py --proxy-pool proxies.txt``.
+    """
+    if not base_config:
+        logger.error("[PROXY-POOL] need --config (or --profile) to know what to run")
+        return 2
+    proxies = load_proxy_dicts(proxy_pool_path, on_error="warn")
+    if not proxies:
+        logger.error(f"[PROXY-POOL] no valid proxies in {proxy_pool_path}")
+        return 2
+    logger.info(f"[PROXY-POOL] loaded {len(proxies)} proxy/ies from {proxy_pool_path}")
+
+    udd_template: Optional[str] = None
+    if getattr(args, "proxy_pool_persistent", False):
+        from pathlib import Path as _P
+        base = _P.home() / ".auto_form_filler_profiles"
+        base.mkdir(parents=True, exist_ok=True)
+        udd_template = str(base / "{name}")
+
+    accts = accounts_from_proxies(
+        proxies,
+        headless=bool(getattr(args, "headless", False)),
+        user_data_dir_template=udd_template,
+    )
+    # Strip single-proxy fields so each worker uses its own. Each
+    # worker needs its OWN copy of the config because some pipeline
+    # steps mutate nested values (e.g. ``actions`` lists for retries,
+    # ``submit`` overrides for self-healing). Sharing a single shallow
+    # copy across all workers in a proxy pool would let one worker's
+    # mutation silently leak into every other concurrent worker. The
+    # GUI counterpart at ``auto_fill_gui.py:2178`` already deep-copies
+    # for the same reason — align the CLI path with it.
+    base_cfg = copy.deepcopy(base_config)
+    for k in ("proxy", "proxy_list", "proxy_rotate"):
+        base_cfg.pop(k, None)
+
+    tasks = [
+        Task(config=copy.deepcopy(base_cfg), vars=dict(a.vars), label=a.name)
+        for a in accts
+    ]
+    pool = WorkerPool(
+        accts,
+        max_concurrency=int(getattr(args, "workers", 0) or len(accts)),
+        report_cb=_print_report_event,
+        dry_run=args.dry_run,
+        threshold=0.55,
+        debug=args.debug,
+        # Honour ``--submit`` and ``submit_after_fill`` config flag so
+        # CLI proxy-pool runs use the same submit semantics as the GUI.
+        submit_after_fill=bool(getattr(args, "submit", False))
+            or bool(base_cfg.get("submit_after_fill")),
+    )
+    results = await pool.run_tasks(tasks)
+    ok = sum(1 for r in results if r.ok)
+    logger.info(f"[PROXY-POOL] done — {ok}/{len(results)} task(s) succeeded")
+    return 0 if ok == len(results) else 1
+
+
 async def run_multi_account(
     *,
     accounts_path: str,
@@ -530,6 +709,11 @@ async def run_multi_account(
         dry_run=args.dry_run,
         threshold=0.55,
         debug=args.debug,
+        # Honour ``--submit`` and ``submit_after_fill`` config flag so
+        # CLI multi-account-pool runs use the same submit semantics as
+        # the GUI / single-account run path.
+        submit_after_fill=bool(getattr(args, "submit", False))
+            or bool((base_config or {}).get("submit_after_fill")),
     )
     results = await pool.run_tasks(tasks)
     ok = sum(1 for r in results if r.ok)
@@ -581,7 +765,22 @@ def parse_args() -> argparse.Namespace:
         "--workers",
         type=int,
         default=0,
-        help="Max concurrent workers (default: number of accounts).",
+        help="Max concurrent workers (default: number of accounts/proxies).",
+    )
+    grp.add_argument(
+        "--proxy-pool",
+        help=(
+            "Path to a proxies file. Each non-empty, non-comment line is one "
+            "proxy in any of: host:port:user:pass | host:port | "
+            "[scheme://][user:pass@]host:port. The same config is run "
+            "concurrently — one BrowserContext per proxy."
+        ),
+    )
+    grp.add_argument(
+        "--proxy-pool-persistent",
+        action="store_true",
+        help="Use separate persistent profiles for each proxy worker "
+             "(default: ephemeral context per worker).",
     )
     _add_proxy_cli_args(p)
     return p.parse_args()
@@ -604,6 +803,16 @@ def main() -> None:
         rc = asyncio.run(run_multi_account(
             accounts_path=args.accounts,
             tasks_path=args.tasks,
+            base_config=base_config,
+            args=args,
+            logger=logger,
+        ))
+        sys.exit(rc)
+
+    if getattr(args, "proxy_pool", None):
+        # Multi-proxy parallel mode
+        rc = asyncio.run(run_multi_proxy(
+            proxy_pool_path=args.proxy_pool,
             base_config=base_config,
             args=args,
             logger=logger,

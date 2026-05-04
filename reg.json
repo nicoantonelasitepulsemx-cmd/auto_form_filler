@@ -1,0 +1,445 @@
+{
+  "version": 2,
+  "target_url": "https://www.facebook.com/",
+  "wait_for_selector": "",
+  "actions": [
+    {
+      "kind": "click",
+      "ts": 1777388094049,
+      "url": "https://www.facebook.com/",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "create_new_account",
+      "field_type": "a",
+      "selectors": [
+        {
+          "strategy": "role_name",
+          "selector": "link|Create new account",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "link",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Create\\ new\\ account\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "css",
+          "selector": "form#login_form > div.xgg1l89.x1cg5xbb > div.x1n2onr6.x1ja2u2z:nth-of-type(1) > div.x9f619.x1n2onr6 > div.x9f619.x1n2onr6:nth-of-type(5) > div.x3nfvp2.x1n2onr6 > a.x1i10hfl.xjbqb8w",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "a",
+        "type": null,
+        "role": "link",
+        "accessible_name": "Create new account",
+        "attributes": {
+          "role": "link",
+          "aria-label": "Create new account"
+        },
+        "text_content": "Create new account",
+        "neighbour_text": "Create new account",
+        "viewport_hint": {
+          "x_pct": 0.535,
+          "y_pct": 0.674,
+          "w_pct": 0.413,
+          "h_pct": 0.061
+        }
+      }
+    },
+    {
+      "kind": "fill",
+      "ts": 1777388104804,
+      "url": "https://www.facebook.com/reg/?entry_point=login&next=",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "first_name",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "stable_id",
+          "selector": "_R_1cl2p4jikacppb6amH1_",
+          "weight": 95
+        },
+        {
+          "strategy": "css",
+          "selector": "#_R_1cl2p4jikacppb6amH1_",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|First name",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "First name",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "input#_R_1cl2p4jikacppb6amH1_",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "First name",
+        "attributes": {
+          "id": "_R_1cl2p4jikacppb6amH1_",
+          "type": "text",
+          "autocomplete": "off"
+        },
+        "text_content": "",
+        "neighbour_text": "First name",
+        "viewport_hint": {
+          "x_pct": 0.287,
+          "y_pct": 0.332,
+          "w_pct": 0.16,
+          "h_pct": 0.053
+        }
+      },
+      "value": "nguyen",
+      "input_method": "fill"
+    },
+    {
+      "kind": "fill",
+      "ts": 1777388108435,
+      "url": "https://www.facebook.com/reg/?entry_point=login&next=",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "surname",
+      "field_type": "text",
+      "selectors": [
+        {
+          "strategy": "stable_id",
+          "selector": "_R_1kl2p4jikacppb6amH1_",
+          "weight": 95
+        },
+        {
+          "strategy": "css",
+          "selector": "#_R_1kl2p4jikacppb6amH1_",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "textbox|Surname",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "textbox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Surname",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "input#_R_1kl2p4jikacppb6amH1_",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "input",
+        "type": "text",
+        "role": null,
+        "accessible_name": "Surname",
+        "attributes": {
+          "id": "_R_1kl2p4jikacppb6amH1_",
+          "type": "text",
+          "autocomplete": "off"
+        },
+        "text_content": "",
+        "neighbour_text": "Surname",
+        "viewport_hint": {
+          "x_pct": 0.511,
+          "y_pct": 0.332,
+          "w_pct": 0.16,
+          "h_pct": 0.053
+        }
+      },
+      "value": "Bao anh",
+      "input_method": "fill"
+    },
+    {
+      "kind": "click",
+      "ts": 1777388112524,
+      "url": "https://www.facebook.com/reg/?entry_point=login&next=",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "select_day",
+      "field_type": "div",
+      "selectors": [
+        {
+          "strategy": "stable_id",
+          "selector": "_r_3_",
+          "weight": 95
+        },
+        {
+          "strategy": "css",
+          "selector": "#_r_3_",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "combobox|Select day",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "combobox",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Select\\ day\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Date of birth\nDay\nMonth\nYear",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#_r_3_",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "div",
+        "type": null,
+        "role": "combobox",
+        "accessible_name": "Select day",
+        "attributes": {
+          "id": "_r_3_",
+          "role": "combobox",
+          "aria-label": "Select day"
+        },
+        "text_content": "Day",
+        "neighbour_text": "Day",
+        "viewport_hint": {
+          "x_pct": 0.276,
+          "y_pct": 0.483,
+          "w_pct": 0.138,
+          "h_pct": 0.083
+        }
+      }
+    },
+    {
+      "kind": "click",
+      "ts": 1777388113475,
+      "url": "https://www.facebook.com/reg/?entry_point=login&next=",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "select_month",
+      "field_type": "div",
+      "selectors": [
+        {
+          "strategy": "stable_id",
+          "selector": "_r_9_",
+          "weight": 95
+        },
+        {
+          "strategy": "css",
+          "selector": "#_r_9_",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "combobox|Select month",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "combobox",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Select\\ month\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Date of birth\nDay\n2\nMonth\nYear",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#_r_9_",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "div",
+        "type": null,
+        "role": "combobox",
+        "accessible_name": "Select month",
+        "attributes": {
+          "id": "_r_9_",
+          "role": "combobox",
+          "aria-label": "Select month"
+        },
+        "text_content": "Month",
+        "neighbour_text": "Month",
+        "viewport_hint": {
+          "x_pct": 0.426,
+          "y_pct": 0.483,
+          "w_pct": 0.138,
+          "h_pct": 0.083
+        }
+      }
+    },
+    {
+      "kind": "click",
+      "ts": 1777388114316,
+      "url": "https://www.facebook.com/reg/?entry_point=login&next=",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "select_year",
+      "field_type": "div",
+      "selectors": [
+        {
+          "strategy": "stable_id",
+          "selector": "_r_f_",
+          "weight": 95
+        },
+        {
+          "strategy": "css",
+          "selector": "#_r_f_",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "combobox|Select year",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "combobox",
+          "weight": 75
+        },
+        {
+          "strategy": "aria_label",
+          "selector": "[aria-label=\"Select\\ year\"]",
+          "weight": 80
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Date of birth\nDay\n2\nMonth\nFebruary\nYear",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#_r_f_",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "div",
+        "type": null,
+        "role": "combobox",
+        "accessible_name": "Select year",
+        "attributes": {
+          "id": "_r_f_",
+          "role": "combobox",
+          "aria-label": "Select year"
+        },
+        "text_content": "Year",
+        "neighbour_text": "Year",
+        "viewport_hint": {
+          "x_pct": 0.576,
+          "y_pct": 0.483,
+          "w_pct": 0.138,
+          "h_pct": 0.083
+        }
+      }
+    },
+    {
+      "kind": "click",
+      "ts": 1777388117132,
+      "url": "https://www.facebook.com/reg/?entry_point=login&next=",
+      "frame_chain": [
+        "top"
+      ],
+      "field_id": "gender_select_your_gender",
+      "field_type": "div",
+      "selectors": [
+        {
+          "strategy": "stable_id",
+          "selector": "_R_mad6p4jikacppb6amH2_",
+          "weight": 95
+        },
+        {
+          "strategy": "css",
+          "selector": "#_R_mad6p4jikacppb6amH2_",
+          "weight": 90
+        },
+        {
+          "strategy": "role_name",
+          "selector": "combobox|Gender\nSelect your gender",
+          "weight": 85
+        },
+        {
+          "strategy": "role",
+          "selector": "combobox",
+          "weight": 75
+        },
+        {
+          "strategy": "label_text",
+          "selector": "Gender\nSelect your gender",
+          "weight": 65
+        },
+        {
+          "strategy": "css",
+          "selector": "div#_R_mad6p4jikacppb6amH2_",
+          "weight": 55
+        }
+      ],
+      "fingerprint": {
+        "tag": "div",
+        "type": null,
+        "role": "combobox",
+        "accessible_name": "Gender\nSelect your gender",
+        "attributes": {
+          "id": "_R_mad6p4jikacppb6amH2_",
+          "role": "combobox"
+        },
+        "text_content": "Select your gender",
+        "neighbour_text": "Select your gender",
+        "viewport_hint": {
+          "x_pct": 0.276,
+          "y_pct": 0.65,
+          "w_pct": 0.438,
+          "h_pct": 0.083
+        }
+      }
+    }
+  ],
+  "submit": null,
+  "captured_at": "2026-04-28T21:55:31",
+  "headless": false,
+  "dry_run": false
+}

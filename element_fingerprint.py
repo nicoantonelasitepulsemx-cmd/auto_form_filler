@@ -46,20 +46,41 @@ FINGERPRINT_JS = r"""
   if (!el) return null;
   const tag = el.tagName.toLowerCase();
 
+  // Read a label's visible text, stripping nested form controls so the
+  // text doesn't include the current ``value`` of a sibling input. This
+  // mirrors recorder_v2.py's ``_labelInnerText`` exactly so the recorded
+  // ``accessible_name`` and the live one computed at replay time stay in
+  // sync \u2014 critical for forms where ``<label>`` wraps multiple inputs
+  // (e.g. ``<label><input type="checkbox"> Subscribe</label>`` repeated
+  // for each row in a fieldset). Without this stripping the recorder
+  // would see "Subscribe" but the resolver would see "Subscribe true"
+  // (or whatever the live nested input's value renders as), tanking the
+  // fingerprint score and risking a wrong-sibling pick.
+  const _labelInnerText = (lab) => {
+    if (!lab) return "";
+    try {
+      const clone = lab.cloneNode(true);
+      clone.querySelectorAll("input, textarea, select, script, style").forEach((n) => n.remove());
+      return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+    } catch (e) {
+      return (lab.innerText || lab.textContent || "").replace(/\s+/g, " ").trim();
+    }
+  };
+
   const accessibleName = (() => {
     if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").trim();
     const labelledby = el.getAttribute("aria-labelledby");
     if (labelledby) {
       const ref = document.getElementById(labelledby);
-      if (ref) return (ref.innerText || ref.textContent || "").trim();
+      if (ref) return _labelInnerText(ref);
     }
     if (el.id) {
       const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lab) return (lab.innerText || lab.textContent || "").trim();
+      if (lab) return _labelInnerText(lab);
     }
     let p = el.parentElement;
     while (p && p !== document.body) {
-      if (p.tagName === "LABEL") return (p.innerText || p.textContent || "").trim();
+      if (p.tagName === "LABEL") return _labelInnerText(p);
       p = p.parentElement;
     }
     if (el.getAttribute("placeholder")) return el.getAttribute("placeholder").trim();
@@ -69,10 +90,23 @@ FINGERPRINT_JS = r"""
 
   // Just the few attrs that meaningfully help disambiguate; we deliberately
   // avoid huge style/className blobs that change between record and replay.
+  // ``value`` is included for radios/checkboxes only — for free-text inputs
+  // the value depends on what the user typed at record time and shouldn't
+  // affect identity. Also accept ARIA-only widgets (``role="radio"`` /
+  // ``role="checkbox"``) which don't carry a native ``type`` attribute but
+  // DO sometimes expose a stable ``value`` attribute we want to use to
+  // disambiguate sibling options.
   const interesting = ["id","name","type","role","data-testid","aria-label",
-                       "placeholder","title","autocomplete"];
+                       "placeholder","title","autocomplete","value"];
   const attributes = {};
+  const _t = (el.getAttribute("type") || "").toLowerCase();
+  const _r = (el.getAttribute("role") || "").toLowerCase();
+  const _isToggle = (
+    _t === "radio" || _t === "checkbox" ||
+    _r === "radio" || _r === "checkbox"
+  );
   for (const k of interesting) {
+    if (k === "value" && !_isToggle) continue;
     const v = el.getAttribute(k);
     if (v != null) attributes[k] = v;
   }
@@ -174,7 +208,30 @@ def fingerprint_score(recorded: dict, current: dict) -> float:
     weigh(1.5, _norm(recorded.get("role")) == _norm(current.get("role")))
 
     # Accessible name: the strongest single signal.
-    weigh(3.0, _norm(recorded.get("accessible_name")) == _norm(current.get("accessible_name")))
+    # v4: bump weight from 3.0 → 5.0 so two ARIA radios in the same
+    # group whose names differ ("I am the rights owner" vs "I am
+    # reporting on behalf...") cannot tie on the rest of the
+    # fingerprint and let the wrong sibling sneak through. We also
+    # add a SOFT mismatch penalty so a non-empty recorded name that
+    # disagrees with a non-empty live name actively hurts the score.
+    #
+    # IMPORTANT: only enter this branch when at least one side has a
+    # non-empty name. ``weigh(5.0, False)`` on two empty names would
+    # otherwise drop fingerprint scores for plain ``<input name=…>``
+    # elements (no accessible name is the common case for
+    # placeholder-only inputs) below the 0.55 replay threshold.
+    rec_name = _norm(recorded.get("accessible_name"))
+    cur_name = _norm(current.get("accessible_name"))
+    if rec_name or cur_name:
+        weigh(5.0, rec_name == cur_name)
+        if rec_name and cur_name and rec_name != cur_name:
+            # Substring relationship still earns *partial* credit so
+            # cosmetic decoration (extra punctuation, "(required)") is
+            # tolerated. Disjoint names penalize.
+            if rec_name in cur_name or cur_name in rec_name:
+                weigh(1.5, True)
+            else:
+                weigh(2.0, False)  # mismatch penalty
 
     # Attributes: count exact matches on the interesting subset.
     rec_attrs = recorded.get("attributes") or {}
@@ -183,6 +240,17 @@ def fingerprint_score(recorded: dict, current: dict) -> float:
     if common_keys:
         matches = sum(1 for k in common_keys if _norm(rec_attrs.get(k)) == _norm(cur_attrs.get(k)))
         weigh(2.0, matches / len(common_keys) >= 0.7)
+
+    # v4: when both fingerprints carry a `value` attribute (radios /
+    # checkboxes), exact value match is a near-decisive signal that
+    # we picked the right sibling. We score it independently from
+    # the broader attribute match so that a sibling with the same
+    # tag/role/neighbour_text but the WRONG value can never sneak
+    # ahead of the right one.
+    rec_val = _norm(rec_attrs.get("value"))
+    cur_val = _norm(cur_attrs.get("value"))
+    if rec_val and cur_val:
+        weigh(3.0, rec_val == cur_val)
 
     # Neighbour text: substring overlap. We only need a chunk to match because
     # menus/buttons around a field rarely change in their entirety.

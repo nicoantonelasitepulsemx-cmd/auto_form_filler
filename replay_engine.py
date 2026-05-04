@@ -102,7 +102,18 @@ async def _read_live_value(loc: Locator) -> Optional[str]:
 
 
 def _interpolate(template: str, ctx: Mapping[str, Any]) -> str:
-    """Replace {var} placeholders in `template` from `ctx`. Unknown vars stay verbatim."""
+    """Replace ``{var}`` placeholders in *template* from *ctx*. Unknown vars stay verbatim.
+
+    The negative-lookbehind/lookahead skip ``{var}`` matches that are
+    wrapped in another brace pair — i.e. ``{{var}}`` tokens that belong
+    to ``value_templates`` (``{{date}}``, ``{{uuid4}}``,
+    ``{{random_email}}``, ``{{env:NAME}}``…). Without the lookarounds,
+    a ctx key whose name collides with a value-templates token name
+    (auto_template emits ``date`` for date-like values, and ``{{date}}``
+    is also a documented value-templates token) would have its inner
+    ``{date}`` substituted, mangling the ``{{date}}`` token into
+    ``{2025-01-01}`` and silently losing the date expansion downstream.
+    """
     if not template:
         return template
     def sub(m: re.Match[str]) -> str:
@@ -110,18 +121,145 @@ def _interpolate(template: str, ctx: Mapping[str, Any]) -> str:
         if key in ctx:
             return str(ctx[key])
         return m.group(0)
-    return re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", sub, template)
+    return re.sub(r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})", sub, template)
+
+
+async def _fetch_otp_code(
+    page: Page,
+    action: dict,
+    ctx: Optional[Mapping[str, Any]],
+    *,
+    logger,
+) -> Optional[str]:
+    """Resolve the value for an ``otp_paste`` action.
+
+    Strategy (first wins):
+
+    1. ``ctx['_kuku']`` is a pre-built :py:class:`kuku_lu.Kuku` instance.
+       Use it directly — pure function, no network setup happens here.
+    2. ``ctx['_kuku_creds']`` is a :py:class:`kuku_lu.KukuCreds`. Build
+       a Playwright-backed client against the current ``page`` and reuse
+       it for the duration of this action.
+    3. Fall back to the literal ``action['value']`` recorded at capture
+       time. This is mostly useful for dry-runs and unit tests; in real
+       runs the recorded code has long since expired.
+
+    Returns the code as a string, or ``None`` when no path produces one
+    so the caller can skip cleanly.
+    """
+    source = action.get("source") or {}
+    if (source.get("kind") or "kuku.lu") != "kuku.lu":
+        logger.warning(f"  [otp] unknown source kind {source.get('kind')!r}; using recorded value")
+        return action.get("value") or None
+
+    address = source.get("address")
+    regex = source.get("regex") or r"(?<!\d)(\d{5,8})(?!\d)"
+    from_filter = source.get("from_filter")
+    timeout_ms = int(source.get("timeout_ms") or 180000)
+
+    if ctx is not None:
+        existing = ctx.get("_kuku")
+        if existing is not None:
+            try:
+                return await existing.wait_for_code(
+                    address,
+                    regex=regex,
+                    timeout=timeout_ms / 1000.0,
+                    from_filter=from_filter,
+                )
+            except Exception as exc:
+                logger.warning(f"  [otp] Kuku.wait_for_code failed: {exc!r}")
+
+        creds = ctx.get("_kuku_creds")
+        if creds is not None:
+            try:
+                from kuku_lu import Kuku
+                async with await Kuku.from_playwright(page, creds=creds) as k:
+                    return await k.wait_for_code(
+                        address,
+                        regex=regex,
+                        timeout=timeout_ms / 1000.0,
+                        from_filter=from_filter,
+                    )
+            except Exception as exc:
+                logger.warning(f"  [otp] Kuku.from_playwright failed: {exc!r}")
+
+    # Last-resort: replay the literally-recorded code so dry-runs / unit
+    # tests still produce a value. The actual code will be stale in a
+    # real OTP scenario but this keeps the pipeline functional.
+    rec = action.get("value")
+    if rec:
+        logger.warning(
+            "  [otp] no Kuku client in ctx — using recorded code as fallback. "
+            "Pass ctx['_kuku_creds']=KukuCreds(...) to fetch a fresh code."
+        )
+        return str(rec)
+    return None
+
+
+_PLACEHOLDER_RE = re.compile(r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})")
+
+
+def _template_has_unresolved_placeholders(
+    template: str, ctx: Mapping[str, Any]
+) -> bool:
+    """True iff *template* contains any ``{var}`` whose key is not in *ctx*.
+
+    Used by :func:`_resolve_value` to decide whether the
+    ``value_template`` interpolation can produce a usable value, OR
+    whether the recorder's captured literal ``value`` should be used
+    as a fallback. Critically, this inspects the **template**'s
+    placeholders against the **ctx**, not the interpolated **result** —
+    the result may legitimately contain literal ``{word}`` patterns
+    coming from a ctx value (e.g. a free-text field where the user
+    typed ``"Use {standard} format"``), and treating those as
+    unresolved would discard the successful interpolation.
+
+    The negative lookbehind/lookahead skip ``{{var}}`` tokens that
+    belong to :mod:`value_templates` and are not subject to
+    ctx-substitution at all.
+    """
+    if not isinstance(template, str):
+        return False
+    for m in _PLACEHOLDER_RE.finditer(template):
+        if m.group(1) not in ctx:
+            return True
+    return False
 
 
 def _resolve_value(action: dict, ctx: Optional[Mapping[str, Any]]) -> Any:
-    """Pick `value_template` (with interpolation) over `value` if present.
+    """Pick ``value_template`` (with interpolation) over ``value`` if present.
 
     After picking the raw value, expand ``{{date}}`` / ``{{uuid4}}`` /
     ``{{random_email}}`` / ``{{env:NAME}}`` / etc. via :mod:`value_templates`
     so each replay run gets a fresh value when the user templates fields.
+
+    Behavior:
+      * ``value_template`` missing or empty → use captured ``value``.
+      * ``value_template`` present and **every** ``{var}`` placeholder
+        in it is satisfied by *ctx* → interpolate and use the result.
+      * ``value_template`` present but **at least one** ``{var}``
+        placeholder is missing from *ctx* → fall back to the captured
+        ``value`` so the form is filled with something usable rather
+        than a half-resolved template.
+
+    The "missing placeholder" check is run on the **template**, not the
+    interpolation **result** — the result may legitimately contain
+    literal ``{word}`` patterns from a ctx value (e.g. a free-text
+    field where the user typed ``"Use {standard} format"``). Inspecting
+    the result would false-positive there and silently discard the
+    successful interpolation.
     """
-    if "value_template" in action and ctx is not None:
-        raw = _interpolate(action["value_template"], ctx)
+    raw: Any
+    if "value_template" in action and action["value_template"]:
+        template = action["value_template"]
+        ctx_view: Mapping[str, Any] = ctx or {}
+        if isinstance(template, str) and _template_has_unresolved_placeholders(
+            template, ctx_view
+        ):
+            raw = action.get("value", template)
+        else:
+            raw = _interpolate(template, ctx_view)
     else:
         raw = action.get("value")
     try:
@@ -282,6 +420,118 @@ async def _do_click(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         return False
 
 
+async def _verify_radio_outcome(
+    page: Page, loc: Locator, action: dict, logger,
+    settle_ms: int = 250,
+) -> bool:
+    """Confirm the right radio is selected after a check action.
+
+    Returns True iff:
+      * the resolved element ends up aria-checked / .checked = true, AND
+      * its accessible name (or recorded radio_value, if present)
+        matches what the recording expected.
+
+    A False return tells the caller to keep falling through the
+    attempt ladder. This is the central guard against the Facebook
+    trademark-form bug where the resolver's role_name lookup picked
+    a sibling whose accessible name differed only by a few words.
+
+    ``settle_ms`` waits for late-arriving sibling-flip mutations from
+    React/SPA forms — the page may dispatch a controlled re-render or
+    a synthetic click on the previously-selected sibling shortly after
+    the user click, leaving the wrong option selected if we verify too
+    eagerly. 250 ms covers the typical React batched-render tick
+    (~16 ms × N) without slowing replay down meaningfully.
+    """
+    fp = action.get("fingerprint") or {}
+    rec_name = (fp.get("accessible_name") or "").strip()
+    rec_value = (action.get("radio_value") or "").strip()
+    if not rec_name and not rec_value:
+        return True
+    if settle_ms > 0:
+        try:
+            await asyncio.sleep(settle_ms / 1000.0)
+        except Exception:
+            pass
+    try:
+        live = await loc.evaluate(
+            """el => {
+                const accName = (() => {
+                    const al = el.getAttribute('aria-label');
+                    if (al) return al.trim();
+                    const lbid = el.getAttribute('aria-labelledby');
+                    if (lbid) {
+                        const ref = document.getElementById(lbid);
+                        if (ref) return (ref.innerText || ref.textContent || '').trim();
+                    }
+                    return ((el.innerText || el.textContent || '').trim());
+                })();
+                const checked = el.getAttribute('aria-checked') === 'true' || !!el.checked;
+                return {
+                    name: accName,
+                    value: el.value || el.getAttribute('value') || '',
+                    checked: checked,
+                };
+            }"""
+        )
+    except Exception:
+        return True  # can't verify — give up on the strict check
+    if not live:
+        return True
+    if not live.get("checked"):
+        logger.debug(
+            f"  [CHECK_VERIFY] live element not checked yet (name={live.get('name')!r})"
+        )
+        return False
+
+    def _norm(s: str) -> str:
+        return " ".join((s or "").lower().split())
+
+    if rec_value and _norm(live.get("value", "")) and _norm(rec_value) == _norm(live.get("value", "")):
+        return True
+    if rec_name and _norm(live.get("name", "")) and _norm(rec_name) == _norm(live.get("name", "")):
+        return True
+    if rec_name and _norm(live.get("name", "")):
+        # Substring match in either direction handles "I am the rights
+        # owner." vs "I am the rights owner" or extra decoration.
+        if _norm(rec_name) in _norm(live.get("name", "")) or _norm(live.get("name", "")) in _norm(rec_name):
+            return True
+    logger.warning(
+        f"  [CHECK_VERIFY] checked the wrong sibling: "
+        f"wanted name={rec_name!r}/value={rec_value!r}, "
+        f"got name={live.get('name')!r}/value={live.get('value')!r}"
+    )
+    return False
+
+
+def _is_radio_check_action(action: dict) -> bool:
+    """True when *action* is a check on a radio (native or ARIA).
+
+    Pure helper extracted so the v4 RADIO RULE can be unit-tested
+    without driving Playwright. Returns False for ARIA checkboxes and
+    plain hidden-input checkboxes — those must NOT be classified as
+    radios because the rule unconditionally drops checked=false on
+    radios, which would silently break checkbox unchecks.
+
+    Detection signals (any one is enough):
+      * ``_hidden_input_type == "radio"`` — recorder paired the click
+        with a hidden ``<input type=radio>``
+      * ``fingerprint.role == "radio"`` — ARIA-conformant radio (e.g.
+        Facebook's ``div[role=radio]``)
+      * ``fingerprint.type == "radio"`` — recorder captured the native
+        ``<input>`` directly without proxy promotion
+    """
+    hidden_input_type = action.get("_hidden_input_type")
+    fp = action.get("fingerprint") or {}
+    fp_role = (fp.get("role") or "").lower()
+    fp_type = (fp.get("type") or "").lower()
+    return (
+        hidden_input_type == "radio"
+        or fp_role == "radio"
+        or fp_type == "radio"
+    )
+
+
 async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
     """Set a checkbox / radio (real <input> or `[role=checkbox|radio]`).
 
@@ -306,13 +556,37 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         P3. Find a nearby visible label/span with matching text → click it
         P4. Structured check()/uncheck() (Playwright may handle some cases)
         P5. JS direct set + React-compatible synthetic event as last resort
+
+    v4 RADIO RULE
+        For radios we **never** uncheck. Old recordings that contain
+        ``check checked=false`` on a role=radio / type=radio element are
+        always sibling-deselect ghosts; we skip them silently rather than
+        risk landing the form on the wrong sibling. Use
+        ``deselect_radio_action`` semantics by recording an explicit
+        check on the desired sibling.
     """
     desired = bool(action.get("checked", True))
     is_click_proxy = bool(action.get("_click_proxy"))
     hidden_input_name = action.get("_hidden_input_name")
-    hidden_input_type = action.get("_hidden_input_type", "radio")
+    # IMPORTANT: do NOT default ``_hidden_input_type`` to ``"radio"``.
+    # The recorder only sets this field when it actually saw a hidden
+    # ``<input type=radio|checkbox>`` paired with a styled proxy
+    # element. ARIA-only widgets (``div[role=checkbox]``,
+    # ``div[role=radio]``, …) ship without it, and a stale ``"radio"``
+    # default would misclassify ARIA-checkbox uncheck actions as
+    # radio sibling-deselect ghosts and silently drop them.
+    hidden_input_type = action.get("_hidden_input_type")
     radio_value = action.get("radio_value")
     neighbour_text = (action.get("fingerprint") or {}).get("neighbour_text", "")
+    is_radio_action = _is_radio_check_action(action)
+
+    # v4 RADIO RULE: drop check-false actions on radios.
+    if is_radio_action and not desired:
+        logger.info(
+            f"  [CHECK_SKIP] {action.get('field_id')!r}: ignoring "
+            "checked=false on a radio (sibling-deselect ghost)"
+        )
+        return True
 
     try:
         await loc.scroll_into_view_if_needed(timeout=3000)
@@ -331,8 +605,15 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         if hidden_input_name:
             try:
                 return await page.evaluate(
+                    # When ``inputType`` is empty, drop the ``[type="..."]``
+                    # filter so we still find the right ARIA-only widget.
+                    # Defaulting to "radio" here would silently miss
+                    # ARIA-checkbox recordings whose action dict carries
+                    # ``_hidden_input_name`` but no ``_hidden_input_type``.
                     """([name, val, inputType]) => {
-                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
                         const inputs = document.querySelectorAll(sel);
                         for (const inp of inputs) {
                             if (val && inp.value === val) return !!inp.checked;
@@ -340,7 +621,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                         }
                         return false;
                     }""",
-                    [hidden_input_name, radio_value or "", hidden_input_type or "radio"],
+                    [hidden_input_name, radio_value or "", hidden_input_type or ""],
                 )
             except Exception:
                 pass
@@ -409,8 +690,13 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         # -- P2: find the hidden input by name+value, then click its parent label --
         try:
             clicked = await page.evaluate(
+                # Conditional selector: drop ``[type="..."]`` when inputType
+                # is empty so ARIA-only widgets without ``_hidden_input_type``
+                # still resolve.
                 """([name, val, inputType]) => {
-                    const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                    const sel = inputType
+                        ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                        : 'input[name="' + name + '"]';
                     const inputs = document.querySelectorAll(sel);
                     for (const inp of inputs) {
                         if (val && inp.value !== val) continue;
@@ -435,7 +721,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                     }
                     return null;
                 }""",
-                [hidden_input_name, radio_value or "", hidden_input_type],
+                [hidden_input_name, radio_value or "", hidden_input_type or ""],
             )
             if clicked:
                 await asyncio.sleep(0.3)
@@ -451,7 +737,9 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
             try:
                 clicked = await page.evaluate(
                     """([name, matchText, inputType]) => {
-                        const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
                         const inputs = document.querySelectorAll(sel);
                         for (const inp of inputs) {
                             // Find the container holding this radio group
@@ -474,7 +762,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                         }
                         return null;
                     }""",
-                    [hidden_input_name, match_text, hidden_input_type],
+                    [hidden_input_name, match_text, hidden_input_type or ""],
                 )
                 if clicked:
                     await asyncio.sleep(0.3)
@@ -511,7 +799,9 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         try:
             ok = await page.evaluate(
                 """([name, val, inputType, desired]) => {
-                    const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
+                    const sel = inputType
+                        ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                        : 'input[name="' + name + '"]';
                     const inputs = document.querySelectorAll(sel);
                     for (const inp of inputs) {
                         if (val && inp.value !== val) continue;
@@ -533,7 +823,7 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
                     }
                     return false;
                 }""",
-                [hidden_input_name, radio_value or "", hidden_input_type, desired],
+                [hidden_input_name, radio_value or "", hidden_input_type or "", desired],
             )
             if ok:
                 logger.info("  [CHECK_OK] proxy → JS direct set (last resort)")
@@ -544,13 +834,77 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
 
     # ==================== NORMAL PATH (visible inputs / ARIA widgets) ====================
 
+    # v4 PRE-CHECK target verification for radios: before we touch the
+    # element, confirm the resolved candidate's accessible name / value
+    # matches what we recorded. If the resolver picked the wrong sibling
+    # (a real risk on FB-style radio groups where every option shares
+    # tag, role, neighbour text, viewport position) we re-resolve with
+    # the recorded label/value as a stricter Playwright text selector
+    # before issuing any click.
+    if is_radio_action and desired:
+        recorded_name = ((action.get("fingerprint") or {}).get("accessible_name") or "").strip()
+        try:
+            live = await loc.evaluate(
+                """el => ({
+                    aria: (el.getAttribute('aria-label') || '').trim(),
+                    labelledby: el.getAttribute('aria-labelledby') || '',
+                    text: ((el.innerText || el.textContent || '').trim()),
+                    value: el.value || el.getAttribute('value') || '',
+                })"""
+            )
+        except Exception:
+            live = None
+        live_name = ""
+        if live:
+            live_name = (live.get("aria") or "").strip()
+            if not live_name and live.get("labelledby"):
+                try:
+                    live_name = (
+                        await page.evaluate(
+                            "id => { const e = document.getElementById(id);"
+                            " return e ? (e.innerText || e.textContent || '').trim() : ''; }",
+                            live["labelledby"],
+                        )
+                    ) or ""
+                except Exception:
+                    pass
+            if not live_name:
+                live_name = (live.get("text") or "").strip()
+
+        def _norm_name(s: str) -> str:
+            return " ".join((s or "").lower().split())
+
+        if recorded_name and _norm_name(recorded_name) != _norm_name(live_name):
+            logger.warning(
+                f"  [CHECK_VERIFY] resolver picked {live_name!r} but "
+                f"recording wanted {recorded_name!r} — re-resolving"
+            )
+            # Re-resolve via Playwright's role-name lookup with the
+            # recorded accessible name as an exact-ish match. We allow
+            # the `name` to be a substring (exact=False) because some
+            # apps add invisible decoration to the label.
+            try:
+                candidate = page.get_by_role("radio", name=recorded_name, exact=False).first
+                if (await candidate.count()) > 0:
+                    loc = candidate
+                    logger.info("  [CHECK_VERIFY] re-resolved via get_by_role(radio, name=...)")
+            except Exception:
+                pass
+
     # ---- Attempt 1: structured check/uncheck (works for real visible inputs) ----
     try:
         if desired:
             await loc.check(timeout=5000)
         else:
             await loc.uncheck(timeout=5000)
-        return True
+        # v4 POST-CHECK: for radios, verify the action actually
+        # succeeded AND no sibling is wrongly checked.
+        if is_radio_action and not await _verify_radio_outcome(
+            page, loc, action, logger,
+        ):
+            logger.warning("  [CHECK_VERIFY] structured check passed but state mismatch; falling through")
+        else:
+            return True
     except Exception:
         pass
 
@@ -559,8 +913,13 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         await loc.click(timeout=5000)
         await asyncio.sleep(0.15)
         if await _is_checked() == desired:
-            logger.info("  [CHECK_OK] healed via click")
-            return True
+            if is_radio_action and not await _verify_radio_outcome(
+                page, loc, action, logger,
+            ):
+                logger.warning("  [CHECK_VERIFY] click succeeded but wrong sibling — falling through")
+            else:
+                logger.info("  [CHECK_OK] healed via click")
+                return True
     except Exception:
         pass
 
@@ -569,8 +928,13 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         await loc.click(force=True, timeout=5000)
         await asyncio.sleep(0.15)
         if await _is_checked() == desired:
-            logger.info("  [CHECK_OK] healed via force-click")
-            return True
+            if is_radio_action and not await _verify_radio_outcome(
+                page, loc, action, logger,
+            ):
+                logger.warning("  [CHECK_VERIFY] force-click succeeded but wrong sibling — falling through")
+            else:
+                logger.info("  [CHECK_OK] healed via force-click")
+                return True
     except Exception:
         pass
 
@@ -587,27 +951,62 @@ async def _do_check(page: Page, loc: Locator, action: dict, *, logger) -> bool:
         pass
 
     # ---- Attempt 5: JS direct manipulation of the hidden input ----
+    # Critical: we deliberately do NOT dispatch a synthetic ``click`` event
+    # here. React/SPA forms (Facebook trademark, etc.) hook the label's
+    # click handler to dispatch a sibling-flip on the *next* radio in the
+    # group. Firing ``click`` from our heal would re-trigger that ghost
+    # and undo the heal. ``change`` + ``input`` alone are enough to sync
+    # the controlled-component state of every framework we care about.
+    #
+    # We also retry the heal up to 3 times with a 250 ms settle between
+    # attempts, in case the ghost listener is keyed off ``change`` (rare,
+    # but seen in some headless-ui radio-group implementations) and tries
+    # to flip our pick back. Each iteration re-reads ``el.checked`` and
+    # only re-sets when it has drifted.
     if hidden_input_name:
         try:
-            ok = await page.evaluate(
-                """([name, val, inputType, desired]) => {
-                    const sel = 'input[type="' + inputType + '"][name="' + name + '"]';
-                    const inputs = document.querySelectorAll(sel);
-                    for (const inp of inputs) {
-                        if (val && inp.value !== val) continue;
-                        inp.checked = desired;
-                        inp.dispatchEvent(new Event('change', {bubbles: true}));
-                        inp.dispatchEvent(new Event('input',  {bubbles: true}));
-                        inp.dispatchEvent(new Event('click',  {bubbles: true}));
-                        return true;
-                    }
-                    return false;
-                }""",
-                [hidden_input_name, radio_value or "", hidden_input_type or "radio", desired],
-            )
-            if ok:
-                logger.info("  [CHECK_OK] healed via JS direct set on hidden input")
-                return True
+            for _attempt in range(3):
+                ok = await page.evaluate(
+                    # Same broadened selector as ``_is_checked``: drop the
+                    # ``[type="..."]`` filter when the recorder didn't
+                    # capture a hidden_input_type, so ARIA-only checkbox
+                    # widgets are still healed.
+                    """([name, val, inputType, desired]) => {
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
+                        const inputs = document.querySelectorAll(sel);
+                        for (const inp of inputs) {
+                            if (val && inp.value !== val) continue;
+                            inp.checked = desired;
+                            inp.dispatchEvent(new Event('change', {bubbles: true}));
+                            inp.dispatchEvent(new Event('input',  {bubbles: true}));
+                            return true;
+                        }
+                        return false;
+                    }""",
+                    [hidden_input_name, radio_value or "", hidden_input_type or "", desired],
+                )
+                if not ok:
+                    break
+                await asyncio.sleep(0.25)
+                state_ok = await page.evaluate(
+                    """([name, val, inputType, desired]) => {
+                        const sel = inputType
+                            ? 'input[type="' + inputType + '"][name="' + name + '"]'
+                            : 'input[name="' + name + '"]';
+                        const inputs = document.querySelectorAll(sel);
+                        for (const inp of inputs) {
+                            if (val && inp.value !== val) continue;
+                            return inp.checked === desired;
+                        }
+                        return false;
+                    }""",
+                    [hidden_input_name, radio_value or "", hidden_input_type or "", desired],
+                )
+                if state_ok:
+                    logger.info("  [CHECK_OK] healed via JS direct set on hidden input")
+                    return True
         except Exception:
             pass
 
@@ -776,6 +1175,29 @@ async def run_action(
     fid  = action.get("field_id", "<unnamed>")
 
     if kind == "wait":
+        # Smart-wait kinds (set by the recorder when a navigation / network
+        # idle / DOM burst is observed right after an action). Fall back to
+        # the legacy duration_ms sleep when wait_kind is missing.
+        wait_kind = (action.get("wait_kind") or "").strip().lower()
+        timeout_ms = int(action.get("timeout_ms", 15000))
+        if wait_kind in ("navigation", "domcontentloaded", "load", "networkidle"):
+            tgt = "domcontentloaded" if wait_kind in ("navigation", "domcontentloaded") else wait_kind
+            logger.info(f"[WAIT] for_load_state={tgt!r} (timeout {timeout_ms} ms)")
+            if not dry_run:
+                try:
+                    await page.wait_for_load_state(tgt, timeout=timeout_ms)
+                except Exception as exc:
+                    logger.warning(f"  [WAIT] {tgt} timed out: {exc!r}")
+            return True
+        if wait_kind == "selector":
+            sel = action.get("selector") or ""
+            logger.info(f"[WAIT] selector={sel!r} (timeout {timeout_ms} ms)")
+            if not dry_run and sel:
+                try:
+                    await page.wait_for_selector(sel, timeout=timeout_ms)
+                except Exception as exc:
+                    logger.warning(f"  [WAIT] selector {sel!r} timed out: {exc!r}")
+            return True
         ms = int(action.get("duration_ms", 250))
         logger.info(f"[WAIT] {ms} ms")
         if not dry_run:
@@ -803,6 +1225,55 @@ async def run_action(
         except Exception as exc:
             last_err = exc
         await asyncio.sleep(0.3 * attempt)
+
+    if not resolved:
+        # v4 escalation: optional LLM-backed self-heal. The hook is a
+        # pure no-op when ``OPENAI_API_KEY`` is not set, so importing
+        # / wiring it has zero impact on default behaviour.
+        try:
+            from ai_features import ai_heal  # local import keeps module optional
+        except Exception:
+            ai_heal = None  # type: ignore[assignment]
+        if ai_heal is not None:
+            try:
+                snippet = ""
+                try:
+                    snippet = await page.content()
+                    if len(snippet) > 4000:
+                        snippet = snippet[:4000]
+                except Exception:
+                    pass
+                tried = ", ".join(
+                    s.get("selector", "?")
+                    for s in (action.get("selectors") or [])
+                    if isinstance(s, dict)
+                )[:300]
+                heal = ai_heal(
+                    fingerprint=action.get("fingerprint"),
+                    last_selector=tried,
+                    snippet=snippet,
+                    failure_reason="resolver returned no candidate",
+                )
+                if heal.ok:
+                    try:
+                        ai_loc = page.locator(heal.selector)
+                        if (await ai_loc.count()) > 0:
+                            logger.info(
+                                f"  [AI_HEAL] {heal.selector!r} ({heal.rationale})"
+                            )
+                            resolved = ResolveResult(
+                                locator=ai_loc.first,
+                                frame=page.main_frame,
+                                strategy="ai_heal",
+                                selector=heal.selector,
+                                score=0.51,
+                            )
+                    except Exception as exc:
+                        logger.debug(f"  [AI_HEAL] selector unusable: {exc}")
+                else:
+                    logger.debug(f"  [AI_HEAL] skipped: {heal.rationale}")
+            except Exception as exc:
+                logger.debug(f"  [AI_HEAL] error: {exc}")
 
     if not resolved:
         logger.warning(
@@ -835,6 +1306,21 @@ async def run_action(
         return await _do_combobox(page, resolved, action, str(_resolve_value(action, ctx)), logger=logger)
     if kind == "contenteditable":
         return await _do_contenteditable(page, resolved.locator, str(_resolve_value(action, ctx)), logger=logger)
+    if kind == "otp_paste":
+        code = await _fetch_otp_code(page, action, ctx, logger=logger)
+        if code is None:
+            logger.warning(f"  [SKIP] otp_paste {fid!r} — no code available")
+            return False
+        # Reuse _do_fill so the existing fill→type→paste self-heal applies.
+        return await _do_fill(page, resolved.locator, action, code, logger=logger)
+    if kind == "submit":
+        # v4 multi-step forms keep all submit actions inline rather than
+        # collapsing them into a single trailing ``cfg["submit"]``. Those
+        # inline submits resolve to the actual button locator, so a click
+        # is always the right thing to do here. The fall-through to
+        # ``_do_fill`` was a no-op (submit buttons have no value) and
+        # left multi-step forms stuck on the first page.
+        return await _do_click(page, resolved.locator, action, logger=logger)
 
     # Default: best-effort fill.
     return await _do_fill(page, resolved.locator, action, _resolve_value(action, ctx), logger=logger)
@@ -861,7 +1347,22 @@ async def run_actions(
 
     Between actions we sleep for ``action_delay_ms + rand(0..action_jitter_ms)``
     to mimic human pacing — important for FB-style anti-bot heuristics.
+
+    After actions that *can* trigger navigation (any ``submit`` / ``click``
+    that lands on a button-like element) we also call
+    ``page.wait_for_load_state('domcontentloaded')`` with a short timeout.
+    This is a defensive auto-wait that helps replay survive lazy-loading
+    pages without the recording having to capture explicit waits. It
+    short-circuits silently if the page never navigated — nothing breaks
+    when the click did not cause a load.
     """
+    # v4 GHOST COALESCE: pre-v4 recordings carry sibling-flip
+    # ghosts as separate ``check checked=true`` actions. Drop them
+    # here so an OLD recording made before the recorder fix still
+    # replays correctly (this is the user's "tm4.json" case — the
+    # recorder fix only protects NEW recordings; this pass protects
+    # existing ones).
+    actions = _normalize_radio_ghost_actions(actions, logger=logger)
     filled = 0
     skipped = 0
     for i, action in enumerate(actions):
@@ -874,6 +1375,13 @@ async def run_actions(
             skipped += 1
             if stop_on_fail:
                 break
+        # Auto-settle after navigation-prone actions.
+        if not dry_run and ok and _action_may_navigate(action):
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                # Page didn't navigate — expected for non-link clicks.
+                pass
         # Pause before the next action (skip after the last one).
         if i < len(actions) - 1 and not dry_run:
             base = max(0, int(action_delay_ms))
@@ -881,6 +1389,175 @@ async def run_actions(
             extra = random.randint(0, jitter) if jitter > 0 else 0
             await asyncio.sleep((base + extra) / 1000.0)
     return filled, skipped
+
+
+def _radio_group_key(action: dict) -> Optional[tuple]:
+    """Group key for two radio-check actions targeting the same group.
+
+    Used by :func:`_normalize_radio_ghost_actions` to coalesce
+    consecutive ``check checked=true`` actions that the **old**
+    pre-fix recorder shipped when React fired a synthetic
+    sibling-flip change burst right after a real user click. Only
+    the first (user's actual choice) survives the coalesce — the
+    later one is the ghost.
+
+    The grouping signals — in priority order:
+
+    1. ``_hidden_input_name`` (set when the recorder promoted a click
+       on a label/span to the hidden ``<input type=radio name=...>``).
+    2. ``fingerprint.attributes.name`` (native ``<input type=radio>``).
+    3. ``fingerprint.attributes.aria-controls`` /
+       ``fingerprint.attributes.role-group`` for ARIA radios where the
+       recorder didn't capture an HTML name.
+
+    Returns ``None`` when the action isn't a radio check (so it
+    can't participate in coalescing).
+    """
+    if (action.get("kind") or "").lower() != "check":
+        return None
+    if not _is_radio_check_action(action):
+        return None
+    if action.get("checked") is False:
+        return None  # checked=false ghosts are dropped elsewhere
+    fp = action.get("fingerprint") or {}
+    attrs = (fp.get("attributes") or {}) if isinstance(fp.get("attributes"), dict) else {}
+    name = (
+        action.get("_hidden_input_name")
+        or attrs.get("name")
+        or attrs.get("aria-controls")
+    )
+    if not name:
+        return None
+    frame_chain = tuple(action.get("frame_chain") or ())
+    return (frame_chain, str(name))
+
+
+def _normalize_radio_ghost_actions(
+    actions: list[dict],
+    *,
+    mode: str = "first_wins",
+    ghost_window_ms: int = 350,
+    logger=None,
+) -> list[dict]:
+    """Coalesce sibling-flip ghosts and form-rerender duplicates on radio groups.
+
+    Empirical analysis of real broken recordings (notably the user's
+    Facebook trademark form ``tm4.json``) shows that the OLD recorder
+    captures *several* ``check checked=true`` events per radio group
+    even when the user only clicked once:
+
+      1. The genuine user click.
+      2. A sibling-flip ghost ~100-1000ms later (React's group
+         deselect-by-click handler — Chromium's activation behavior
+         on the synthetic click fires a trusted ``change``).
+      3. **Form-rerender ghosts** seconds or minutes later, when the
+         page conditionally re-mounts the radio group (for example
+         after the user fills in upstream text fields and the form
+         shows a new section). Each remount fires a ``change`` event
+         that the recorder dumps as another ``check checked=true``.
+
+    Time-window-only coalescing (the previous strategy) couldn't
+    catch (3) because the gap is 30-50 seconds. The user's tm4.json
+    has 7 ``check`` actions on the ``no_tm_database`` group, 3 on
+    ``court_order``, and 3 on ``relationship_rightsowner`` — even
+    though the user clicked each group exactly once.
+
+    Modes:
+      * ``"first_wins"`` *(default)* — for each radio group, only
+        the first ``check checked=true`` action survives. All later
+        actions on the same group are dropped, regardless of
+        timestamp distance. This matches the dominant real-world
+        case (one user click per group); recordings where the user
+        legitimately re-picked a sibling need to use ``"window"``
+        mode or be re-recorded.
+      * ``"window"`` — drop only same-group actions whose ts is
+        within ``ghost_window_ms`` of the previous same-group
+        action. This is the looser, time-based heuristic; useful
+        when the user actually changes their selection inside a
+        single recording.
+      * ``"none"`` — pass through unchanged (used for unit tests).
+
+    Returns a new list; the input is not mutated.
+    """
+    if not actions or mode == "none":
+        return list(actions)
+    if mode not in ("first_wins", "window"):
+        raise ValueError(f"unknown coalesce mode {mode!r}")
+
+    out: list[dict] = []
+    seen: dict[tuple, float] = {}  # group key → last kept ts
+    dropped = 0
+    for act in actions:
+        key = _radio_group_key(act)
+        if key is not None:
+            ts = act.get("ts")
+            if mode == "first_wins":
+                if key in seen:
+                    if logger is not None:
+                        prev = seen[key]
+                        delta = (
+                            f"Δ={ts - prev:.0f}ms"
+                            if isinstance(ts, (int, float)) and isinstance(prev, (int, float))
+                            else "Δ=?"
+                        )
+                        logger.info(
+                            "  [GHOST_DROP] first-wins: "
+                            f"group {key[1]!r} already has a winner ({delta}); "
+                            f"dropping action {act.get('field_id')!r}"
+                        )
+                    dropped += 1
+                    continue
+                seen[key] = float(ts) if isinstance(ts, (int, float)) else float("nan")
+            else:  # mode == "window"
+                if isinstance(ts, (int, float)):
+                    prev_ts = seen.get(key)
+                    if (
+                        prev_ts is not None
+                        and isinstance(prev_ts, float)
+                        and prev_ts == prev_ts  # filter out NaN sentinel
+                        and (ts - prev_ts) <= ghost_window_ms
+                    ):
+                        if logger is not None:
+                            logger.info(
+                                "  [GHOST_DROP] window-coalesce: "
+                                f"group {key[1]!r} (Δ={ts - prev_ts:.0f}ms ≤ "
+                                f"{ghost_window_ms}ms); dropping action "
+                                f"{act.get('field_id')!r}"
+                            )
+                        dropped += 1
+                        continue
+                    seen[key] = float(ts)
+                else:
+                    # ts-less actions can't gate the time window; mark with
+                    # NaN so the next numeric ts won't compare against a
+                    # poisoned sentinel (Devin Review BUG #3182896670).
+                    seen[key] = float("nan")
+        out.append(act)
+    if dropped and logger is not None:
+        logger.info(
+            f"  [GHOST_DROP] {dropped} duplicate radio action(s) coalesced "
+            f"before replay (mode={mode!r})"
+        )
+    return out
+
+
+def _action_may_navigate(action: dict) -> bool:
+    """Heuristic: does this action plausibly trigger navigation/page load?"""
+    kind = (action.get("kind") or "").lower()
+    if kind == "submit":
+        return True
+    if kind != "click":
+        return False
+    fp = action.get("fingerprint") or {}
+    tag = (fp.get("tag") or "").lower()
+    role = (fp.get("role") or "").lower()
+    if tag == "a" or tag == "button":
+        return True
+    if role in ("link", "button"):
+        return True
+    # Anything that looks like a submit by text — heuristic from recorder.
+    name = (fp.get("accessible_name") or "").lower()
+    return any(k in name for k in ("submit", "send", "continue", "next", "gửi", "tiếp"))
 
 
 __all__ = ["run_action", "run_actions"]

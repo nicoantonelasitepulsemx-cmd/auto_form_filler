@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+samples/
+
+# Test/run artifacts
+recorded_v2_*.json
+recorded_v2_*.events.json
+*_shots/
+shots/
+.devin_work/
+*.tar.gz
+
+# Recordings and account snapshots that often carry live proxy
+# credentials, kuku.lu session tokens, or other secrets. Keep them
+# local — never commit. See CHANGELOG.md v4 notes.
+mail.tm.json
+testcopy*.json
+trademark*.json
+*.private.json
+.recordings/

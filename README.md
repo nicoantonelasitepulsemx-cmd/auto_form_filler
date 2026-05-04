@@ -92,6 +92,90 @@ radio) is captured along with its value. When you're finished, click
 with is appended to the GUI as a complete config entry (including the
 value you typed). Save to disk and you're done.
 
+### One-time codes via kuku.lu disposable mail
+
+The recorder can mint a disposable address per session and paste OTP
+codes for you. m.kuku.lu is a free Japanese throw-away mail service —
+no signup, you keep an "account" by saving two cookies.
+
+1. **Provision an account** (one-time, per proxy/identity):
+   ```
+   python kuku_lu_cli.py mint --out kuku_acct1.json
+   ```
+   Save `kuku_acct1.json` somewhere safe — it contains the
+   `csrf_token` + `sessionhash` that identify this kuku.lu account
+   plus the disposable address that was minted.
+
+2. **Record with OTP support** by passing `--kuku-creds`:
+   ```
+   python recorder_v2.py --url https://m.facebook.com/help/contact \
+       --out trademark_form.json \
+       --kuku-creds kuku_acct1.json \
+       --kuku-from facebook
+   ```
+   The recorder panel gains a blue "✎ Get OTP → paste" button. While
+   recording: when you reach the confirmation-code field, click the
+   field once, then click the panel button. The recorder polls
+   kuku.lu, types the matching code into the input, and ships an
+   `kind="otp_paste"` action — so replay can re-fetch a fresh code
+   per account on every run.
+
+3. **Per-proxy mailboxes (multi-account replay).** Add a `kuku` block
+   next to each account in `accounts.json` so each proxy drains its
+   own inbox during parallel replay:
+   ```json
+   {
+     "name": "acct1",
+     "proxy": "http://user:pass@1.2.3.4:8080",
+     "kuku": { "csrf_token": "...", "sessionhash": "...", "current_address": "abc@kpay.be" }
+   }
+   ```
+   The replay engine (`replay_engine.run_action`) automatically
+   resolves OTP actions through the account's kuku creds — pass
+   `ctx={"_kuku_creds": account.kuku, ...}` from the orchestrator.
+
+### Mail-per-proxy Manager (GUI)
+
+Instead of editing `accounts.json` by hand, click **📧 Mail-per-proxy**
+in the main toolbar to open a dedicated dialog that:
+
+- Loads / saves `accounts.json` with the same schema described above.
+- Lists every account with a masked proxy preview, the bound kuku
+  mailbox, and a status badge.
+- Buttons per account:
+  - **🆕 Mint mailbox** — provisions a fresh kuku.lu identity through
+    the account's proxy (so the egress IP matches what replay will
+    use).
+  - **🔄 New address** — rotates the disposable alias when the
+    previous one is spammed.
+  - **📥 Test inbox** — peeks at the latest 3 messages for debugging.
+  - **⏳ Wait OTP** — polls until a code arrives, then copies it to
+    the clipboard. Same regex / from-filter / timeout logic as the
+    replay engine.
+- **Domain** — combobox replicating the m.kuku.lu "Add email
+  address" dropdown (`@boxfi.uk`, `@haren.uk`, `@bangban.uk`,
+  `@catgroup.uk`, `@goatmail.uk`, `@sendnow.win`, `@ccmail.uk`,
+  `@exdonuts.com`, `@tensi.org`, `@kpay.be`, `@neko2.net`). Leave
+  blank to let kuku.lu pick a random domain. Editable: type any new
+  domain that kuku.lu adds in the future. The selected domain is
+  applied to both **Mint mailbox** and **New address**, and saved as
+  part of the OTP defaults.
+- **From proxy file…** — pick a `host:port:user:pass`-per-line file
+  and one account row is created per proxy, ready for bulk-mint.
+- **OTP defaults** — saved in `~/.auto_form_filler_otp_defaults` so
+  every recorder/replay run picks up your preferred regex and
+  from-filter without editing JSON.
+
+The dialog reuses the parent GUI's theme (dark / light) and runs all
+kuku.lu calls in a background thread so the main window stays
+responsive.
+
+> **Cloudflare note:** kuku.lu sometimes ships a Cloudflare challenge
+> on datacenter IPs. The recorder uses the same browser context as
+> the form recording itself, so it inherits any clearance cookie you
+> already solved interactively. For headless replay, run from a
+> residential IP or use `kuku_lu_cli.py --via-browser`.
+
 ## CAPTCHA detection + pause-for-human
 
 When the engine loads the form (and again right before/after submit), it
@@ -193,6 +277,83 @@ CLI flags:
 The GUI defaults to a dark theme. Toggle via the **☀ Light / ☽ Dark**
 button at the top-right of the window. The choice persists at
 `~/.auto_form_filler_theme`.
+
+## v4 — radio targeting + extension APIs
+
+v4 fixes a bug where picking "I am the rights owner" on
+Facebook's trademark form was being replayed as "I am reporting on
+behalf of someone else". The recorder, replay engine, and resolver
+all received hardening:
+
+- **Recorder**: role=radio clicks ship `checked=true` (radios are
+  never deselected by clicking) instead of the pre-React
+  `aria-checked` value. Sibling-deselect ghosts on `aria-checked`
+  *and* `<input type=radio>` `change` events are dropped silently.
+- **Resolver**: `accessible_name` weight bumped 3.0 → 5.0 with a
+  soft mismatch penalty; exact `value` attribute match earns
+  dedicated weight so two siblings sharing tag/role/neighbour text
+  but different `value`s can no longer tie.
+- **Replay**: refuses to call `uncheck()` on a radio; verifies the
+  live element's accessible name *before* clicking and re-resolves
+  via `page.get_by_role("radio", name=...)` if the resolver picked
+  the wrong sibling; verifies post-click outcome and falls through
+  the escalation ladder on a sibling-mismatch.
+
+A new module **`ai_features.py`** ships three opt-in hooks:
+
+| API | Purpose |
+|-----|---------|
+| `ai_heal(...)`            | LLM-backed selector self-heal. Replay calls it when the resolver returns no candidate. Pure no-op without `OPENAI_API_KEY`; configurable model via `AUTOFORM_AI_HEAL_MODEL`. |
+| `vision_match(rec, cands)`| Perceptual-hash tiebreaker (pure-Python dHash, no Pillow) for selecting between visually similar candidates. |
+| `codegen_export(config)`  | Render a captured recording into a runnable standalone Playwright Python script (no `auto_form_filler` dependency). |
+| `vision_hash(png)`        | Stand-alone perceptual hash helper. |
+| `stable_hash(payload)`    | Deterministic SHA-256 over any JSON-serialisable payload. |
+
+```python
+from ai_features import codegen_export
+print(codegen_export(json.load(open("trademark1.json"))))
+```
+
+See `CHANGELOG.md` for the full v4 release notes.
+
+### v4.1 — six more opt-in modules
+
+All pure-Python, no new pip deps. Pick what you need; each module
+imports cleanly without the others.
+
+| Module | Purpose |
+|--------|---------|
+| `captcha_solve` | reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile via 2Captcha / Anti-Captcha / CapSolver. Auto-detects which provider is configured (env-var key). |
+| `recording_diff` | Compare two recordings → unchanged/drifted/changed/added/removed. Catches form drift before a batch run. |
+| `webhook_notify` | `Notifier.discord(...)` / `.telegram(...)` / `.slack(...)` + `broadcast([...])` for batch-job summaries. |
+| `form_data_csv` | Drive a recording from a CSV; built-in mini-Faker (`{{faker.name}}`, `{{faker.email}}`, `{{faker.uuid}}`, …) with deterministic seeding. |
+| `network_capture` | URL-pattern blocker (`BLOCK_ADS`, `BLOCK_ANALYTICS`, `BLOCK_FONTS`, `BLOCK_HEAVY`, …) + Playwright HAR record/replay helpers. |
+| `stealth_profile` | `generate_profile(name)` deterministic per-account fingerprint (UA, viewport, locale, WebGL renderer) + `apply_profile(context, p)` init script masking `navigator.webdriver`, `Permissions.query`, plugin count, WebGL vendor/renderer. |
+
+```python
+# captcha
+from captcha_solve import solve_recaptcha_v2, inject_recaptcha_token
+res = solve_recaptcha_v2(site_key="6Lc...", page_url=page.url)
+if res.ok:
+    await inject_recaptcha_token(page, res.token)
+
+# webhook summary
+from webhook_notify import Notifier
+Notifier.discord(WEBHOOK_URL).send_summary(
+    "Nightly batch", ok_count=198, fail_count=2, elapsed_s=45.6,
+)
+
+# stealth + network optimisations
+from stealth_profile import generate_profile, apply_profile
+from network_capture import compile_blocker, attach_blocker, BLOCK_HEAVY
+
+profile = generate_profile(account.name)  # deterministic per-account
+ctx = await browser.new_context(**profile_to_context_options(profile))
+await apply_profile(ctx, profile)
+
+blocker = compile_blocker(bundles=[BLOCK_HEAVY])
+detach = await attach_blocker(ctx, blocker)
+```
 
 ## v2 — accurate record + replay
 
@@ -326,14 +487,66 @@ proxy actually works before clicking Run.
 ### Proxy list format
 
 `proxies.txt` is a plain newline-separated list. Blank lines and `#`
-comments are skipped:
+comments are skipped. Each line can use **any** of these shapes (mix
+freely in the same file):
 
 ```
-# free pool
-http://user1:pass1@1.2.3.4:8080
-http://user2:pass2@5.6.7.8:8080
+# host:port:user:pass — most common in commercial proxy lists
+1.2.3.4:8080:alice:apass
+
+# host:port — anonymous proxy (no auth)
+9.10.11.12:3128
+
+# user:pass@host:port
+bob:bpass@5.6.7.8:9090
+
+# explicit scheme + URL form
+http://user:pass@1.2.3.4:8080
 socks5://9.10.11.12:1080
 ```
+
+A ready-to-edit template is provided as `proxies.example.txt`.
+
+## Multi-proxy parallel runs
+
+If you have a pool of proxies and want to run the **same** config across
+all of them at the same time (one BrowserContext per proxy), use the
+**Proxy pool** feature.
+
+### CLI
+
+```bash
+# Run config.json with one parallel page per proxy
+python auto_fill.py --config config.json --proxy-pool proxies.txt
+
+# Cap concurrency to 5 even if proxies.txt has more lines
+python auto_fill.py --config config.json --proxy-pool proxies.txt --workers 5
+
+# Headless + dry-run is great for smoke-testing the pool itself
+python auto_fill.py --config config.json --proxy-pool proxies.txt --headless --dry-run
+
+# Each worker gets its own persistent Chromium profile
+python auto_fill.py --config config.json --proxy-pool proxies.txt --proxy-pool-persistent
+```
+
+The pool prints `task_start` / `task_done` events for every proxy; final
+line is `[PROXY-POOL] done — N/M task(s) succeeded`.
+
+### GUI
+
+The GUI has a dedicated **Proxy pool** row (just below **Multi-account**):
+
+* **proxies file** — pick a `.txt` / `.list` file in the format above.
+* **Validate** — parse the file and show how many proxies are valid +
+  the first few (passwords masked) without running anything.
+* **parallel** — max concurrent browser contexts (defaults to the number
+  of proxies in the file).
+* **separate profiles** — when checked, each worker uses its own
+  persistent profile under `~/.auto_form_filler_profiles/proxy_<i>` so
+  cookies / storage stay isolated across runs. Leave unchecked for
+  ephemeral one-shot runs.
+* **▶ Run multi-proxy** — fan the current config out across all proxies.
+  Per-proxy events stream into the log.
 
 ### SOCKS authentication caveat
 

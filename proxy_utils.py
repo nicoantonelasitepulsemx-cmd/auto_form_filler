@@ -15,6 +15,15 @@ Accepted input shapes
        socks5://user:pass@host:port           # see note below
        host:port                              # scheme defaults to http
 
+   Plus the **proxy-list flat formats** that most commercial proxy
+   providers ship (no scheme, just colons):
+
+       host:port:user:pass                    # 4 fields  → most common
+       host:port                              # 2 fields
+       user:pass@host:port                    # creds before host
+
+   Optional leading scheme (`http://`, `https://`, `socks5://`) is honoured.
+
 2. Dict (what the JSON config and the GUI emit):
 
        {
@@ -30,6 +39,9 @@ Accepted input shapes
 
    Loaded from disk via `load_proxy_list(path)`. Lines starting with `#` and
    blank lines are ignored.
+
+   For the multi-proxy parallel runner, use `load_proxy_dicts(path)` which
+   returns the parsed Playwright dicts directly.
 
 The output is always either:
 
@@ -64,6 +76,67 @@ ProxyInput = Union[str, dict, None]
 # --------------------------------------------------------------------------------------
 
 
+_VALID_SCHEMES = ("http", "https", "socks4", "socks5")
+
+
+def _split_scheme(raw: str) -> tuple[str, str]:
+    """Return (scheme, rest) where scheme is one of `_VALID_SCHEMES` or ''.
+
+    `rest` never contains the `://` separator.
+    """
+    s = raw.strip()
+    if "://" in s:
+        scheme, _, rest = s.partition("://")
+        return scheme.lower(), rest
+    return "", s
+
+
+def _try_parse_flat(rest: str) -> Optional[dict]:
+    """Parse `host:port[:user:pass]` (no scheme, no `@`).
+
+    Returns None if `rest` doesn't look like the flat colon format.
+
+    Recognised shapes:
+        host:port                       → 2 fields
+        host:port:user:pass             → 4+ fields (password may contain `:`)
+
+    A 3-field input (`host:port:user`) is treated as user-supplied
+    `user:pass@host` so we don't accept it here — return None and let the
+    caller fall through to the URL parser.
+
+    NOTE: ``@`` and ``/`` are *only* forbidden in the host/port halves —
+    they are perfectly legitimate inside the password (e.g.
+    ``host:port:admin:p@ss`` or ``host:port:admin:p/ss``). Splitting on
+    colon with ``maxsplit=3`` first means we can vet only the
+    host/port slice without false-positives on funky passwords.
+    """
+    parts = rest.split(":", 3)
+    if len(parts) < 2:
+        return None
+    host = parts[0].strip()
+    port_str = parts[1].strip()
+    # Bail out only when the host or port itself contains ``@`` or ``/``
+    # — those characters in the password are fine and must be preserved.
+    if "@" in host or "/" in host or "@" in port_str or "/" in port_str:
+        return None
+    if not host or not port_str.isdigit():
+        return None
+    out: dict[str, Any] = {"server": f"http://{host}:{port_str}"}
+    if len(parts) >= 4:
+        # ``parts[3]`` already preserves any `:` inside the password
+        # (the maxsplit=3 split above stops before it).
+        user = parts[2]
+        pwd = parts[3]
+        if user:
+            out["username"] = user
+        if pwd != "":
+            out["password"] = pwd
+    elif len(parts) == 3:
+        # Ambiguous — could be user/pass missing. Reject.
+        return None
+    return out
+
+
 def _normalize_url(raw: str) -> str:
     """Add an http:// scheme if the user just typed `host:port`."""
     s = raw.strip()
@@ -75,22 +148,48 @@ def _normalize_url(raw: str) -> str:
 
 
 def parse_proxy_string(raw: str) -> Optional[dict]:
-    """Parse `[scheme://][user:pass@]host:port[/]` into a Playwright dict.
+    """Parse a proxy string into a Playwright dict.
+
+    Accepted shapes (see module docstring):
+        - `[scheme://][user:pass@]host:port[/]`
+        - `host:port:user:pass` (flat, no scheme)
+        - `host:port`           (flat, no scheme)
 
     Returns None if `raw` is empty/whitespace.
     """
-    s = _normalize_url(raw)
+    s = (raw or "").strip()
     if not s:
         return None
 
-    parsed = urlparse(s)
+    scheme, rest = _split_scheme(s)
+    # 3+ colons strongly suggests flat ``host:port:user:pass`` format.
+    # We do NOT short-circuit on ``@`` here because the password field
+    # may legitimately contain it (e.g. ``host:port:user:p@ss``). The
+    # URL form ``user:pass@host:port`` only has 2 colons, so the count
+    # check alone disambiguates. ``_try_parse_flat`` validates the
+    # host/port halves itself and returns None if they aren't sane,
+    # which lets us fall through to the URL parser without false
+    # positives.
+    if not scheme and rest.count(":") >= 3:
+        flat = _try_parse_flat(rest)
+        if flat is not None:
+            return flat
+    # Flat 2-field `host:port` (no creds) — also handled by URL parser below
+    # but we keep this branch for symmetry / to give better errors.
+
+    s_for_url = s if scheme else "http://" + rest
+    parsed = urlparse(s_for_url)
     if not parsed.hostname:
+        # Last-ditch: maybe it's flat host:port:user:pass that slipped through.
+        flat = _try_parse_flat(rest)
+        if flat is not None:
+            return flat
         raise ValueError(f"proxy URL is missing a host: {raw!r}")
     if not parsed.port:
         raise ValueError(f"proxy URL is missing a port: {raw!r}")
 
     scheme = (parsed.scheme or "http").lower()
-    if scheme not in ("http", "https", "socks4", "socks5"):
+    if scheme not in _VALID_SCHEMES:
         raise ValueError(f"unsupported proxy scheme: {scheme!r}")
 
     server = f"{scheme}://{parsed.hostname}:{parsed.port}"
@@ -164,6 +263,50 @@ def load_proxy_list(path: Union[str, Path]) -> list[str]:
             continue
         lines.append(line)
     return lines
+
+
+def load_proxy_dicts(
+    path: Union[str, Path],
+    *,
+    default_bypass: Optional[str] = None,
+    on_error: str = "warn",
+) -> list[dict]:
+    """Read a proxy list file and return parsed Playwright proxy dicts.
+
+    Each line is parsed via :func:`parse_proxy_string`, so every shape
+    documented in the module docstring is accepted (URL, `host:port`,
+    `host:port:user:pass`, ...).
+
+    Args:
+        path: file path to read.
+        default_bypass: optional comma-separated bypass list to attach to
+            every parsed proxy.
+        on_error: ``"warn"`` (default) skips bad lines and prints to stderr,
+            ``"raise"`` re-raises the parse error, ``"silent"`` skips quietly.
+
+    Returns:
+        list[dict] — one Playwright-shaped dict per valid line, in file order.
+    """
+    raw_lines = load_proxy_list(path)
+    out: list[dict] = []
+    for i, line in enumerate(raw_lines, start=1):
+        try:
+            d = parse_proxy_string(line)
+        except Exception as exc:  # noqa: BLE001 — we want every error here
+            if on_error == "raise":
+                raise
+            if on_error == "warn":
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[proxy_utils] line {i} of {path}: {exc}\n"
+                )
+            continue
+        if not d:
+            continue
+        if default_bypass:
+            d["bypass"] = default_bypass
+        out.append(d)
+    return out
 
 
 class ProxyRotator:
@@ -334,6 +477,7 @@ __all__ = [
     "ProxyRotator",
     "add_cli_args",
     "build_playwright_proxy",
+    "load_proxy_dicts",
     "load_proxy_list",
     "mask_proxy",
     "normalize_proxy",

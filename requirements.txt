@@ -1,1 +1,11 @@
 playwright>=1.44.0
+# kuku.lu disposable mail integration (used by kuku_lu.py and the
+# `--kuku-creds` flag of the recorder). Both modules are also
+# importable through Playwright alone, so these are technically
+# optional, but installing them keeps the requests-backed CLI usable
+# on residential IPs.
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+# Test-only dependency — used by test_kuku_lu.py / test_otp_paste_replay.py
+# to stand up a local fake kuku.lu server. Safe to skip in production.
+aiohttp>=3.9.0

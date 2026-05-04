@@ -102,7 +102,18 @@ async def _read_live_value(loc: Locator) -> Optional[str]:
 
 
 def _interpolate(template: str, ctx: Mapping[str, Any]) -> str:
-    """Replace {var} placeholders in `template` from `ctx`. Unknown vars stay verbatim."""
+    """Replace ``{var}`` placeholders in *template* from *ctx*. Unknown vars stay verbatim.
+
+    The negative-lookbehind/lookahead skip ``{var}`` matches that are
+    wrapped in another brace pair — i.e. ``{{var}}`` tokens that belong
+    to ``value_templates`` (``{{date}}``, ``{{uuid4}}``,
+    ``{{random_email}}``, ``{{env:NAME}}``…). Without the lookarounds,
+    a ctx key whose name collides with a value-templates token name
+    (auto_template emits ``date`` for date-like values, and ``{{date}}``
+    is also a documented value-templates token) would have its inner
+    ``{date}`` substituted, mangling the ``{{date}}`` token into
+    ``{2025-01-01}`` and silently losing the date expansion downstream.
+    """
     if not template:
         return template
     def sub(m: re.Match[str]) -> str:
@@ -110,7 +121,7 @@ def _interpolate(template: str, ctx: Mapping[str, Any]) -> str:
         if key in ctx:
             return str(ctx[key])
         return m.group(0)
-    return re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", sub, template)
+    return re.sub(r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})", sub, template)
 
 
 async def _fetch_otp_code(

@@ -8,7 +8,53 @@ captured literal.
 """
 from __future__ import annotations
 
-from replay_engine import _resolve_value
+from replay_engine import _interpolate, _resolve_value
+
+
+# -----------------------------------------------------------------------------
+# _interpolate (lower-level): regression for ctx-key vs {{var}} collision.
+# -----------------------------------------------------------------------------
+
+
+def test_interpolate_preserves_double_brace_when_ctx_collides() -> None:
+    """ctx['date']='2025-01-01' must NOT corrupt ``{{date}}``.
+
+    Before the fix, ``_interpolate`` matched the inner ``{date}`` of the
+    ``{{date}}`` value-templates token and substituted it, leaving
+    ``{2025-01-01}`` — which value_templates.expand cannot recognize.
+    The double-brace token must survive unchanged for downstream
+    expansion.
+    """
+    out = _interpolate("{{date}}", {"date": "2025-01-01"})
+    assert out == "{{date}}", (
+        f"double-brace token corrupted by ctx-key collision: {out!r}"
+    )
+
+
+def test_interpolate_resolves_single_brace_keeps_double_brace() -> None:
+    """Mixed string: ``{email}`` resolves, ``{{date}}`` survives."""
+    out = _interpolate(
+        "{email} on {{date}}",
+        {"email": "bob@x.com", "date": "2025-01-01"},
+    )
+    assert out == "bob@x.com on {{date}}", (
+        f"mixed-template interpolation wrong: {out!r}"
+    )
+
+
+def test_interpolate_unknown_var_stays_verbatim() -> None:
+    out = _interpolate("{email}", {})
+    assert out == "{email}"
+
+
+def test_interpolate_no_ctx_collision_leaves_double_brace() -> None:
+    out = _interpolate("{{uuid4}}", {})
+    assert out == "{{uuid4}}"
+
+
+# -----------------------------------------------------------------------------
+# _resolve_value (higher-level): end-to-end coverage of the same behaviour.
+# -----------------------------------------------------------------------------
 
 
 def test_unresolved_single_brace_falls_back_to_captured_value() -> None:
